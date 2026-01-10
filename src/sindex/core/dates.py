@@ -1,0 +1,122 @@
+from datetime import date, datetime, timezone
+from typing import Optional
+
+from dateutil import parser
+
+
+def _parse_date_strict(iso_str: str) -> date:
+    """
+    Strictly parse a `YYYY-MM-DD` ISO calendar date string.
+
+    This function is used when querying the DataCite API for records between two given dates.
+    It makes sure the date is formatted correctly and is a valid date.
+
+    Args:
+        iso_str: Input date string in YYYY-MM-DD format.
+
+    Returns:
+        Python `date` object representing the parsed calendar date.
+
+    Raises:
+        ValueError: If the input string is not properly formatted or is not a valid date.
+    """
+    try:
+        y, m, d = map(int, iso_str.split("-"))
+        return date(y, m, d)
+    except Exception as e:
+        raise ValueError(
+            f"Invalid date '{iso_str}' — must be YYYY-MM-DD and a real calendar date."
+        ) from e
+
+
+def _norm_date_iso(s: str) -> str:
+    """
+    Normalize a date string into a canonical ISO-8601 format.
+
+    This function is needed to normalize dates.
+    At minimum the string must contain a 4-digit year. If the input cannot be
+    parsed or does not contain a valid year, a ValueError is raised.
+
+    Examples:
+        _norm_date_iso("2025") -> "2025-01-01T00:00:00"
+        _norm_date_iso("2025-04") -> "2025-04-01T00:00:00"
+        _norm_date_iso("2025/04/04") -> "2025-04-04T00:00:00"
+        _norm_date_iso("2025-04-04T13:22:55Z") -> "2025-04-04T13:22:55+00:00"
+
+    Args:
+        s: A date string (must include at least a 4-digit year).
+
+    Returns:
+        Canonical ISO-8601 formatted date string.
+
+    Raises:
+        ValueError: If the input date cannot be parsed or no 4-digit year is found.
+    """
+    if not isinstance(s, str):
+        raise ValueError("Date must be a string.")
+    s = s.strip()
+    if not s:
+        raise ValueError("Date input is empty.")
+
+    try:
+        dt = parser.parse(s)
+    except Exception as e:
+        raise ValueError(f"Invalid date format: {s}") from e
+
+    if dt.year is None or dt.year < 1 or len(s) < 4:
+        raise ValueError(f"Date must contain a valid 4-digit year: {s}")
+
+    return dt.isoformat()
+
+
+def _to_datetime_utc(s: Optional[str]) -> Optional[datetime]:
+    """
+    Normalize a date string via `_norm_date_iso` and return a timezone-aware UTC datetime.
+
+    This is needed for instance to calculate the amount of time elapsed between two dates.
+
+    Args:
+        s: Any reasonable date string (must contain at least a 4-digit year) or None.
+
+    Returns:
+        A timezone-aware `datetime` in UTC if parsing succeeds, else None.
+    """
+    if not s:
+        return None
+    try:
+        iso = _norm_date_iso(
+            s
+        )  # raises ValueError if completely invalid / missing year
+    except ValueError:
+        return None
+    # Support both "...Z" and "...+00:00"
+    iso = iso.replace("Z", "+00:00")
+    dt = datetime.fromisoformat(iso)
+    # If no tzinfo, set UTC; else convert to UTC
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt
+
+
+def _years_between(start_dt: datetime, end_dt: datetime) -> float:
+    """
+    Compute the fractional number of years between two UTC datetimes.
+
+    The result is constrained to be non-negative. If `end_dt` is earlier than
+    `start_dt`, the return value is `0.0`. This prevents negative contribution
+    to weighting (e.g., citations that appear to pre-date the dataset publicatio for some reason).
+
+    Year length approximation: 365.25 days/year (to include leap-year average)
+
+    Args:
+        start_dt: Dataset creation datetime (UTC).
+        end_dt: Citation publication datetime (UTC).
+
+    Returns:
+        Fractional years difference (float >= 0.0).
+    """
+    seconds = (end_dt - start_dt).total_seconds()
+    years = seconds / (365.25 * 24 * 3600.0)
+    return years if years > 0 else 0.0
