@@ -3,7 +3,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 import requests
-
+from typing import Optional
 from sindex.core.http import _is_reachable
 
 _DOI_PATTERN = re.compile(
@@ -162,7 +162,7 @@ def _norm_dataset_id(raw: Any) -> str:
 
     # 2. Strict EMDB ID detection
     emdb_id = _norm_emdb_id(raw)
-    if doi:
+    if emdb_id:
         return emdb_id
 
     # 3. Fallback for other identifiers (SRA, internal IDs, etc.)
@@ -224,3 +224,24 @@ def is_working_url(s: str, session: requests.Session | None = None) -> bool:
         return False
 
     return _is_reachable(s, session)
+
+
+def norm_dataset_id_db(x: Optional[str]) -> Optional[str]:
+    """
+    DB-safe wrapper around _norm_dataset_id.
+    Never raises, returns None on failure.
+    """
+    if not x:
+        return None
+    y = _norm_dataset_id(x)
+    return y if y else None
+
+
+def norm_doi_url_or_raw(x: Optional[str]) -> Optional[str]:
+    """
+    Normalize DOI URL when possible; otherwise return raw string.
+    """
+    if not x:
+        return None
+    y = _norm_doi_url(x)
+    return y or x

@@ -147,3 +147,17 @@ def _as_iso_from_dateparts(parts) -> str:
     except Exception:
         pass
     return ""
+
+
+
+def norm_date_iso_db(x: Optional[str]) -> Optional[str]:
+    """
+    Safe ISO date normalization for database ingestion.
+    """
+    if not x:
+        return None
+    try:
+        y = _norm_date_iso(x)
+        return y if y else None
+    except Exception:
+        return None
