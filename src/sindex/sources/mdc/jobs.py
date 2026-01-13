@@ -28,7 +28,7 @@ def build_mdc_index(
 
     con.execute("DROP TABLE IF EXISTS mdc_index")
 
-    # 1) ingest + normalize
+    # 1) Ingest + normalize
     con.execute(f"""
         CREATE TABLE mdc_index AS
         SELECT
@@ -40,13 +40,13 @@ def build_mdc_index(
           AND publication IS NOT NULL;
     """)
 
-    # 2) clean failures
+    # 2) Clean failures
     con.execute("""
         DELETE FROM mdc_index
         WHERE dataset_norm IS NULL OR citation_link IS NULL OR citation_link = '';
     """)
 
-    # 3) dedupe (dataset_norm, citation_link)
+    # 3) Dedupe multiple entries of similar (dataset_norm, citation_link)
     con.execute("DROP TABLE IF EXISTS mdc_index_dedup")
     con.execute("""
         CREATE TABLE mdc_index_dedup AS
@@ -60,7 +60,7 @@ def build_mdc_index(
     con.execute("DROP TABLE mdc_index")
     con.execute("ALTER TABLE mdc_index_dedup RENAME TO mdc_index")
 
-    # 4) index for fast point lookups
+    # 4) Index for fast point lookups
     con.execute(
         "CREATE INDEX IF NOT EXISTS idx_mdc_dataset_norm ON mdc_index(dataset_norm)"
     )

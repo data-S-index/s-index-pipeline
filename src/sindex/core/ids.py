@@ -1,9 +1,9 @@
 import re
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import unquote, urlparse
 
 import requests
-from typing import Optional
+
 from sindex.core.http import _is_reachable
 
 _DOI_PATTERN = re.compile(

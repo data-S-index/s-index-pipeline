@@ -149,7 +149,6 @@ def _as_iso_from_dateparts(parts) -> str:
     return ""
 
 
-
 def norm_date_iso_db(x: Optional[str]) -> Optional[str]:
     """
     Safe ISO date normalization for database ingestion.
