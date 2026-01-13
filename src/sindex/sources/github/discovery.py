@@ -7,7 +7,7 @@ import requests
 
 from sindex.core.dates import _norm_date_iso
 from sindex.core.ids import _norm_doi
-from sindex.metrics.mentions import mention_weight
+from sindex.metrics.weights import mention_weight
 from sindex.sources.github.client import get_repo_meta, search_code
 from sindex.sources.github.constants import (
     DEFAULT_MAX_PAGES,

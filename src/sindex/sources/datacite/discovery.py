@@ -122,4 +122,3 @@ def fetch_datacite_pubdate(doi: str, session: requests.Session | None = None) ->
                     continue
     else:
         return ""
-        return ""

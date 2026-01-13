@@ -1,6 +1,8 @@
+# pipeline/external/openalex/client.py
+
 from __future__ import annotations
 
-from typing import Iterator, Optional
+from typing import Optional
 
 import requests
 
@@ -11,13 +13,32 @@ from .constants import OA_BASE_URL, OA_TIMEOUT_SECS, USER_AGENT_OA
 
 def make_openalex_session(
     *,
-    api_key: str | None = None,
+    api_key: Optional[str] = None,
     user_agent: str = USER_AGENT_OA,
 ) -> requests.Session:
+    """
+    Create a requests.Session tuned for OpenAlex with retry/backoff.
+
+    Retries common transient failures and 429/5xx responses, and reuses
+    connections across many OpenAlex calls for better performance.
+
+    Args:
+        total_retries: Max retry attempts for connection/read/status errors.
+        backoff: Exponential backoff factor in seconds.
+        api_key: Optional OpenAlex API key. If provided, it will be sent on
+                 every request as the `api_key` query parameter.
+
+    Returns:
+        A configured `requests.Session` instance.
+    """
     s = make_session(
         user_agent=user_agent,
         allowed_methods=("GET",),
         status_forcelist=(429, 500, 502, 503, 504),
+        pool_connections=20,
+        pool_maxsize=20,
+        total_retries=6,
+        backoff=1.5,
     )
     if api_key:
         s.params = getattr(s, "params", {})
@@ -25,51 +46,17 @@ def make_openalex_session(
     return s
 
 
-def get_openalex_work_by_doi_url(
-    doi_url: str,
+def get_openalex_record(
+    path: str,
     *,
     session: requests.Session,
-    mailto: Optional[str] = None,
-) -> dict | None:
-    url = f"{OA_BASE_URL}/works/{doi_url}"
-    params = {"mailto": mailto} if mailto else None
-
-    r = session.get(url, params=params, timeout=OA_TIMEOUT_SECS)
-    if r.status_code == 404:
-        return None
-    r.raise_for_status()
-    return r.json()
-
-
-def iter_citing_works(
-    openalex_id: str,
-    *,
-    session: requests.Session,
-    mailto: Optional[str] = None,
-    per_page: int = 200,
-) -> Iterator[dict]:
-    cursor = "*"
-
-    while True:
-        params = {
-            "filter": f"cites:{openalex_id}",
-            "per-page": per_page,
-            "cursor": cursor,
-        }
-        if mailto:
-            params["mailto"] = mailto
-
-        r = session.get(
-            f"{OA_BASE_URL}/works",
-            params=params,
-            timeout=OA_TIMEOUT_SECS,
-        )
-        r.raise_for_status()
-        data = r.json()
-
-        for w in data.get("results", []) or []:
-            yield w
-
-        cursor = (data.get("meta") or {}).get("next_cursor")
-        if not cursor:
-            break
+    params: dict | None = None,
+    timeout: int = OA_TIMEOUT_SECS,
+) -> tuple[int, dict]:
+    """
+    GET OA endpoint and return (status_code, json_dict).
+    Raises for invalid JSON, but does NOT call raise_for_status().
+    """
+    url = f"{OA_BASE_URL}{path}"
+    r = session.get(url, params=params, timeout=timeout)
+    return r.status_code, r.json()
