@@ -16,9 +16,6 @@ from urllib.parse import quote
 
 import ijson
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-
 from pipeline.normalize import (
     _collect_dois_and_pub_dates_from_slimmed_file,
     _collect_ids_and_pub_dates_from_slimmed_file,
@@ -29,6 +26,8 @@ from pipeline.normalize import (
     _to_datetime_utc,
     _years_between,
 )
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 USER_AGENT_OA = "openalex-citations (mailto:bvhpatel@gmail.com)"
 
@@ -1232,33 +1231,6 @@ def fast_batch_find_citations_oa(
 # ------------- Datacite ------------- #
 
 
-def _as_iso_from_dateparts(parts) -> str:
-    """
-    Convert a Crossref-style date-parts array to an ISO-8601 string.
-
-    Crossref formats date parts as: [[YYYY, M, D]] or [[YYYY, M]] or [[YYYY]].
-
-    Args:
-        parts: Crossref 'date-parts' value (e.g., [[2024, 10, 31]]).
-
-    Returns:
-        ISO-8601 string like "2024-10-31T00:00:00" if possible, else "".
-    """
-    try:
-        if not parts or not parts[0]:
-            return ""
-        nums = parts[0]
-        if len(nums) >= 3:
-            return _norm_date_iso(f"{nums[0]:04d}-{nums[1]:02d}-{nums[2]:02d}")
-        if len(nums) == 2:
-            return _norm_date_iso(f"{nums[0]:04d}-{nums[1]:02d}-01")
-        if len(nums) == 1:
-            return _norm_date_iso(f"{nums[0]:04d}-01-01")
-    except Exception:
-        pass
-    return ""
-
-
 def _fetch_openalex_pubdate(
     doi_or_doi_url: str,
     email: Optional[str] = None,
@@ -1330,87 +1302,6 @@ def _fetch_openalex_pubdate(
     except Exception:
         pass
 
-    return ""
-
-
-def _fetch_datacite_pubdate(doi_or_doi_url: str, timeout: int = 30) -> str:
-    """
-    Fetch a publication/created date for a DOI from the DataCite API and normalize it.
-
-    Args:
-        doi_or_doi_url: DOI identifier or DOI URL.
-        timeout: HTTP timeout in seconds.
-
-    Returns:
-        ISO-8601 string (normalized) if available, else "".
-    """
-    doi = _norm_doi(doi_or_doi_url)
-    if not doi:
-        return ""
-    try:
-        url = f"https://api.datacite.org/works/{quote(doi, safe='')}"
-        r = requests.get(url, timeout=timeout)
-        if r.status_code != 200:
-            return ""
-        attrs = (r.json().get("data") or {}).get("attributes") or {}
-
-        # DataCite commonly has 'created' (and sometimes 'published' etc.)
-        for key in ("created", "published", "issued"):
-            val = attrs.get(key)
-            if val:
-                try:
-                    return _norm_date_iso(val)
-                except Exception:
-                    # keep looking at other keys if one fails to parse
-                    continue
-    except Exception:
-        pass
-    return ""
-
-
-def _fetch_crossref_pubdate(doi_or_doi_url: str, timeout: int = 30) -> str:
-    """
-    Fetch a publication/issued date for a DOI from the Crossref API and normalize it.
-
-    Tries, in order:
-      - message.created.date-time
-      - message.issued.date-parts
-      - message.published-print.date-parts
-      - message.published-online.date-parts
-
-    Args:
-        doi_or_doi_url: DOI identifier or DOI URL.
-        timeout: HTTP timeout in seconds.
-
-    Returns:
-        ISO-8601 string (normalized) if available, else "".
-    """
-    doi = _norm_doi(doi_or_doi_url)
-    if not doi:
-        return ""
-    try:
-        url = f"https://api.crossref.org/works/{quote(doi, safe='')}"
-        r = requests.get(url, timeout=timeout)
-        if r.status_code != 200:
-            return ""
-        msg = r.json().get("message") or {}
-
-        # 1) created.date-time
-        created_dt = (msg.get("created") or {}).get("date-time")
-        if created_dt:
-            try:
-                return _norm_date_iso(created_dt)
-            except Exception:
-                pass
-
-        # 2) issued / published-* date-parts
-        for key in ("issued", "published-print", "published-online"):
-            dp = (msg.get(key) or {}).get("date-parts")
-            iso = _as_iso_from_dateparts(dp) if dp else ""
-            if iso:
-                return iso
-    except Exception:
-        pass
     return ""
 
 

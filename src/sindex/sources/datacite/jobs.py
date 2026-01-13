@@ -11,8 +11,10 @@ import requests
 from sindex.core.dates import _parse_date_strict
 from sindex.core.http import make_session
 from sindex.core.io import _iter_json_lines
-from sindex.sources.datacite.client import get_datacite_doi_record
-from sindex.sources.datacite.discovery import stream_datacite_records
+from sindex.sources.datacite.discovery import (
+    get_datacite_doi_record,
+    stream_datacite_records,
+)
 from sindex.sources.datacite.normalize import slim_datacite_record
 
 

@@ -2,8 +2,41 @@ from typing import Dict, Iterator, Tuple
 
 import requests
 
+from sindex.core.dates import _norm_date_iso
 from sindex.core.http import make_session
-from sindex.sources.datacite.constants import BASE_API_URL
+from sindex.core.ids import _norm_doi
+
+from .client import get_datacite_record_by_norm_doi
+from .constants import BASE_API_URL
+
+
+def get_datacite_doi_record(
+    doi: str, session: requests.Session | None = None
+) -> dict | None:
+    """
+    Retrieve a single DataCite metadata record for a given DOI or DOI URL.
+
+    Args:
+        doi: DOI string (e.g., "10.5061/dryad.ab12cd3") or full DOI URL.
+        session: Optional shared `requests.Session` (uses retry/backoff if None).
+
+    Returns:
+        The JSON-decoded DataCite record (`data` object) if found, or `None` if
+        the DOI does not exist or returns an error.
+
+    Raises:
+        requests.HTTPError: If an unexpected HTTP error occurs (e.g., 5xx not handled by retries).
+
+    Notes:
+        - The DOI is normalized with _norm_doi to lowercase and stripped of any "https://doi.org/" prefix.
+        - DataCite api direct link: https://api.datacite.org/dois/{doi}
+    """
+    norm_doi = _norm_doi(doi)
+    if not norm_doi:
+        raise ValueError(f"Invalid DOI: {doi}")
+
+    s = session or make_session(allowed_methods=("GET",))
+    return get_datacite_record_by_norm_doi(norm_doi, session=s)
 
 
 def stream_datacite_records(
@@ -62,3 +95,31 @@ def stream_datacite_records(
 
         base_url = next_url
         params = {}
+
+
+def fetch_datacite_pubdate(doi: str, session: requests.Session | None = None) -> str:
+    """
+    Fetch a publication/created date for a DOI from the DataCite API and normalize it.
+
+    Args:
+        doi_or_doi_url: DOI identifier or DOI URL.
+        session: Optional shared `requests.Session` (uses retry/backoff if None).
+
+    Returns:
+        ISO-8601 string (normalized) if available, else "".
+    """
+    datacite_record = get_datacite_doi_record(doi)
+    attrs = datacite_record.get("attributes") or {}
+    if attrs:
+        # Try "created", "published", or "issued" dates one after the other
+        for key in ("created", "published", "issued"):
+            val = attrs.get(key)
+            if val:
+                try:
+                    return _norm_date_iso(val)
+                except Exception:
+                    # keep looking at other keys if one fails to parse
+                    continue
+    else:
+        return ""
+        return ""

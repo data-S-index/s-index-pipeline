@@ -120,3 +120,30 @@ def _years_between(start_dt: datetime, end_dt: datetime) -> float:
     seconds = (end_dt - start_dt).total_seconds()
     years = seconds / (365.25 * 24 * 3600.0)
     return years if years > 0 else 0.0
+
+
+def _as_iso_from_dateparts(parts) -> str:
+    """
+    Convert a Crossref-style date-parts array to an ISO-8601 string.
+
+    Crossref formats date parts as: [[YYYY, M, D]] or [[YYYY, M]] or [[YYYY]].
+
+    Args:
+        parts: Crossref 'date-parts' value (e.g., [[2024, 10, 31]]).
+
+    Returns:
+        ISO-8601 string like "2024-10-31T00:00:00" if possible, else "".
+    """
+    try:
+        if not parts or not parts[0]:
+            return ""
+        nums = parts[0]
+        if len(nums) >= 3:
+            return _norm_date_iso(f"{nums[0]:04d}-{nums[1]:02d}-{nums[2]:02d}")
+        if len(nums) == 2:
+            return _norm_date_iso(f"{nums[0]:04d}-{nums[1]:02d}-01")
+        if len(nums) == 1:
+            return _norm_date_iso(f"{nums[0]:04d}-01-01")
+    except Exception:
+        pass
+    return ""

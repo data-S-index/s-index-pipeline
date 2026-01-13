@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import csv
 import io
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import requests
 
 from sindex.core.http import make_session
-from sindex.core.ids import _norm_emdb_id
-from sindex.sources.emdb.constants import EMDB_IDS_URL, ENTRY_BASE_URL
+from sindex.sources.emdb.constants import (
+    DEFAULT_TIMEOUT_ENTRY,
+    EMDB_IDS_URL,
+    ENTRY_BASE_URL,
+)
 
 
 def _fetch_all_emdb_ids(session: Optional[requests.Session] = None) -> List[str]:
@@ -43,25 +46,25 @@ def _fetch_all_emdb_ids(session: Optional[requests.Session] = None) -> List[str]
     return ids
 
 
-def get_emdb_id_record(emdb_id: str, session: requests.Session | None = None) -> Dict:
+def get_emdb_record_by_norm_id(
+    emdb_id_norm: str,
+    *,
+    session: requests.Session,
+) -> dict:
     """
-    Fetch raw JSON record for a single EMDB id.
+    Fetch raw JSON record for a single *normalized* EMDB accession ID.
 
     Args:
-        session: A configured requests.Session.
-        emdb_id: EMDB accession ID, e.g. "EMD-1001".
+        emdb_id_norm: Normalized EMDB accession ID, e.g. "EMD-1001".
+        session: Configured requests.Session (ideally from core.make_session()).
 
     Returns:
-        A dict with the full entry JSON.
+        Full EMDB entry JSON dict.
+
+    Raises:
+        requests.HTTPError: for non-2xx responses.
     """
-
-    emdb_id_norm = _norm_emdb_id(emdb_id)
-    if not emdb_id_norm:
-        raise ValueError(f"Invalid EMDB ID: {emdb_id}")
-
-    s = session or make_session()
-    url = f"{ENTRY_BASE_URL}/{emdb_id}"
-
-    resp = s.get(url, timeout=120)
+    url = f"{ENTRY_BASE_URL}/{emdb_id_norm}"
+    resp = session.get(url, timeout=DEFAULT_TIMEOUT_ENTRY)
     resp.raise_for_status()
     return resp.json()

@@ -6,7 +6,10 @@ from typing import Dict, Optional, Tuple
 import requests
 
 from sindex.core.dates import _to_datetime_utc
-from sindex.sources.emdb.client import get_emdb_id_record
+from sindex.core.http import make_session
+from sindex.core.ids import _norm_emdb_id
+
+from .client import get_emdb_record_by_norm_id
 
 
 def _extract_deposition_date(entry: Dict) -> Optional[date]:
@@ -67,3 +70,23 @@ def _fetch_entry_and_filter(
         return emdb_id, entry
 
     return emdb_id, None
+
+
+def get_emdb_id_record(emdb_id: str, session: requests.Session | None = None) -> Dict:
+    """
+    Fetch raw JSON record for a single EMDB id.
+
+    Args:
+        session: A configured requests.Session.
+        emdb_id: EMDB accession ID, e.g. "EMD-1001".
+
+    Returns:
+        A dict with the full entry JSON.
+    """
+
+    emdb_id_norm = _norm_emdb_id(emdb_id)
+    if not emdb_id_norm:
+        raise ValueError(f"Invalid EMDB ID: {emdb_id}")
+
+    s = session or make_session(allowed_methods=("GET",))
+    return get_emdb_record_by_norm_id(emdb_id_norm, session=s)
