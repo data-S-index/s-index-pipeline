@@ -1,0 +1,176 @@
+[
+    {
+        "id": "5fe73c9e-f6e8-4552-a9ec-eac83e6208b6",
+        "created": "2025-07-24T14:16:25.161+00:00",
+        "updated": "2025-07-24T14:16:25.161+00:00",
+        "repository": {
+            "title": "The Electron Microscopy Data Bank (EMDB)",
+            "external_id": null
+        },
+        "publisher": {
+            "title": "Springer Science and Business Media LLC",
+            "external_id": null
+        },
+        "journal": {
+            "title": "Journal of Structural and Functional Genomics",
+            "external_id": null
+        },
+        "title": null,
+        "dataset": "EMD-2451",
+        "publication": "https://doi.org/10.1007/s10969-014-9179-9",
+        "publishedDate": "2014-04-20T00:00:00+00:00",
+        "source": "eupmc",
+        "affiliations": [],
+        "funders": [],
+        "subjects": [
+            "biological sciences",
+            "basic medicine"
+        ]
+    },
+    {
+        "id": "5fe73e78-f6c4-4084-8ad2-7d2f859b059a",
+        "created": "2023-09-28T04:08:57.644+00:00",
+        "updated": "2023-09-28T04:08:57.644+00:00",
+        "repository": {
+            "title": "European Nucleotide Archive",
+            "external_id": null
+        },
+        "publisher": {
+            "title": "Hindawi Limited",
+            "external_id": null
+        },
+        "journal": {
+            "title": "BioMed Research International",
+            "external_id": null
+        },
+        "title": null,
+        "dataset": "SRR039616",
+        "publication": "https://doi.org/10.1155/2016/2596782",
+        "publishedDate": "2016-01-01T00:00:00+00:00",
+        "source": "czi",
+        "affiliations": [],
+        "funders": [],
+        "subjects": [
+            "biological sciences",
+            "basic medicine"
+        ]
+    },
+    {
+        "id": "5fe73c9e-f6e8-4552-a9ec-eac83e6208b6",
+        "created": "2025-07-24T14:16:25.161+00:00",
+        "updated": "2025-07-24T14:16:25.161+00:00",
+        "repository": {
+            "title": "The Electron Microscopy Data Bank (EMDB)",
+            "external_id": null
+        },
+        "publisher": {
+            "title": "Springer Science and Business Media LLC",
+            "external_id": null
+        },
+        "journal": {
+            "title": "Journal of Structural and Functional Genomics",
+            "external_id": null
+        },
+        "title": null,
+        "dataset": "EMD-2451",
+        "publication": "https://doi.org/10.1007/s10969-014-9179-9",
+        "publishedDate": "2014-04-20T00:00:00+00:00",
+        "source": "eupmc",
+        "affiliations": [],
+        "funders": [],
+        "subjects": [
+            "biological sciences",
+            "basic medicine"
+        ]
+    },
+    {
+        "id": "66559404-aa15-4762-83f9-6efcf4b4b93b",
+        "created": "2023-09-27T00:59:34.062+00:00",
+        "updated": "2023-10-27T23:31:54.545+00:00",
+        "repository": {
+            "title": "The Electron Microscopy Data Bank (EMDB)",
+            "external_id": null
+        },
+        "publisher": {
+            "title": "Springer Science and Business Media LLC",
+            "external_id": null
+        },
+        "journal": {
+            "title": "Nature Structural & Molecular Biology",
+            "external_id": null
+        },
+        "title": null,
+        "dataset": "EMD-2451",
+        "publication": "https://doi.org/10.1038/nsmb.2736",
+        "publishedDate": "2013-12-15T00:00:00+00:00",
+        "source": "czi",
+        "affiliations": [],
+        "funders": [],
+        "subjects": [
+            "basic medicine",
+            "biological sciences"
+        ]
+    },
+    {
+        "id": "7e19c260-ca85-42ee-ac2c-10c65e9aa5bd",
+        "created": "2025-07-25T08:22:55.268+00:00",
+        "updated": "2025-07-25T08:22:55.268+00:00",
+        "repository": {
+            "title": "PhysioNet",
+            "external_id": null
+        },
+        "publisher": {
+            "title": "Wiley",
+            "external_id": null
+        },
+        "journal": {
+            "title": "Alzheimer's & Dementia",
+            "external_id": null
+        },
+        "title": "MIMIC-IV",
+        "dataset": "https://doi.org/10.13026/kpb9-mt58",
+        "publication": "https://doi.org/10.1002/alz.14564",
+        "publishedDate": "2025-03-29T00:00:00+00:00",
+        "source": "eupmc",
+        "affiliations": [
+            {
+                "title": "Harvard Medical School",
+                "external_id": "https://ror.org/03wevmz92",
+                "ror_name": "Harvard Medical School",
+                "ror_id": "https://ror.org/03wevmz92"
+            },
+            {
+                "title": "Massachusetts Institute of Technology, Cambridge, USA",
+                "external_id": null,
+                "ror_name": "Massachusetts Institute of Technology",
+                "ror_id": "https://ror.org/042nb2s44"
+            },
+            {
+                "title": "Massachusetts Institute of Technology",
+                "external_id": "https://ror.org/042nb2s44",
+                "ror_name": "Massachusetts Institute of Technology",
+                "ror_id": "https://ror.org/042nb2s44"
+            },
+            {
+                "title": "Massachusetts Institute of Technology, USA",
+                "external_id": null,
+                "ror_name": null,
+                "ror_id": null
+            },
+            {
+                "title": "Beth Israel Deaconess Medical Center",
+                "external_id": "https://grid.ac/institutes/grid.239395.7",
+                "ror_name": "Beth Israel Deaconess Medical Center",
+                "ror_id": "https://ror.org/04drvxt59"
+            },
+            {
+                "title": "Beth Israel Deaconess Medical Center, Boston, USA",
+                "external_id": null,
+                "ror_name": "Beth Israel Deaconess Medical Center",
+                "ror_id": "https://ror.org/04drvxt59"
+            }
+        ],
+        "funders": [],
+        "subjects": []
+    }
+]
