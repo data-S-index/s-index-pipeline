@@ -49,3 +49,31 @@ def find_citations_oa(
         dataset_id=doi,
         dataset_pub_date=dataset_pub_date,
     )
+
+
+def get_primary_topic_for_doi(doi: str) -> dict | None:
+    """
+    Given a DOI, fetch the OpenAlex record using get_openalex_doi_record
+    and return the primary topic if it exists.
+
+    Returns:
+        Flat dict with topic + hierarchy info, or None.
+    """
+    work = get_openalex_doi_record(doi)
+    if not work:
+        return None
+
+    pt = work.get("primary_topic")
+    if not pt:
+        return None
+
+    return {
+        "doi": doi,
+        "work_id": work.get("id"),
+        "topic_id": pt.get("id"),
+        "topic_name": pt.get("display_name"),
+        "topic_score": pt.get("score"),
+        "subfield_name": pt.get("subfield", {}).get("display_name"),
+        "field_name": pt.get("field", {}).get("display_name"),
+        "domain_name": pt.get("domain", {}).get("display_name"),
+    }

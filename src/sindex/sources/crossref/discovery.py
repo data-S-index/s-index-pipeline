@@ -1,6 +1,6 @@
 import requests
 
-from sindex.core.dates import _as_iso_from_dateparts, _norm_date_iso
+from sindex.core.dates import _as_iso_from_dateparts
 from sindex.core.http import make_session
 from sindex.core.ids import _norm_doi
 
@@ -38,7 +38,7 @@ def get_crossref_doi_record(
 
 def fetch_crossref_pubdate(doi: str, session: requests.Session | None = None) -> str:
     """
-    Fetch a publication/created date for a DOI from the Crossref API and normalize it.
+    Fetch a publication date for a DOI from the Crossref API and normalize it.
 
     Args:
         doi_or_doi_url: DOI identifier or DOI URL.
@@ -47,22 +47,16 @@ def fetch_crossref_pubdate(doi: str, session: requests.Session | None = None) ->
     Returns:
         ISO-8601 string (normalized) if available, else "".
     """
-    crossref_record = get_crossref_doi_record(doi)
-    msg = crossref_record.get("message") or {}
-    if msg:
-        # 1) created.date-time
-        created_dt = (msg.get("created") or {}).get("date-time")
-        if created_dt:
-            try:
-                return _norm_date_iso(created_dt)
-            except Exception:
-                pass
-
-        # 2) issued / published-* date-parts
-        for key in ("issued", "published-print", "published-online"):
-            dp = (msg.get(key) or {}).get("date-parts")
-            iso = _as_iso_from_dateparts(dp) if dp else ""
-            if iso:
-                return iso
-    else:
+    crossref_record = get_crossref_doi_record(doi, session=session)
+    msg = (crossref_record or {}).get("message") or {}
+    if not msg:
         return ""
+
+    # Prefer publisher-declared "published" date first then tries "issued", "published-online", "published-print"
+    for key in ("published", "issued", "published-online", "published-print"):
+        dp = (msg.get(key) or {}).get("date-parts")
+        iso = _as_iso_from_dateparts(dp) if dp else ""
+        if iso:
+            return iso
+
+    return ""

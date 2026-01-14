@@ -1,0 +1,259 @@
+Folder PATH listing
+Volume serial number is A0E8-A0FB
+C:.
+|   .gitignore
+|   directory_tree.txt
+|   environment.yml
+|   pyproject.toml
+|   README.md
+|   
++---.ipynb_checkpoints
++---input
+|   \---mdc
+|           mdc_index.duckdb
+|           
++---notebooks
+|   |   datacite_citations_test.ipynb
+|   |   datacite_harvest_test.ipynb
+|   |   emdb_harvest_test.ipynb
+|   |   fuji_test.ipynb
+|   |   github_mentions_test.ipynb
+|   |   mdc-citations-test.ipynb
+|   |   openalex-topics-analysis.ipynb
+|   |   openalex_citations_test.ipynb
+|   |   
+|   +---.ipynb_checkpoints
+|   |       datacite_citations_test-checkpoint.ipynb
+|   |       datacite_harvest_test-checkpoint.ipynb
+|   |       emdb_harvest_test-checkpoint.ipynb
+|   |       fuji_test-checkpoint.ipynb
+|   |       github_mentions_test-checkpoint.ipynb
+|   |       mdc-citations-test-checkpoint.ipynb
+|   |       openalex-topics-analysis-checkpoint.ipynb
+|   |       openalex_citations_test-checkpoint.ipynb
+|   |       
+|   +---input
+|   |   +---.ipynb_checkpoints
+|   |   +---demo_datasets_slim_metadata_ndjson
+|   |   |       datacite.ndjson
+|   |   |       emdb.ndjson
+|   |   |       
+|   |   \---mdc-light
+|   |           mdc-light-1.json
+|   |           mdc-light-2.json
+|   |           mdc_index.duckdb
+|   |           
+|   \---output
+|       +---.ipynb_checkpoints
+|       +---datacite
+|       |   +---.ipynb_checkpoints
+|       |   +---batch_slim_test
+|       |   |   |   datacite-2014-12-28-2014-12-31-slim.ndjson
+|       |   |   |   datacite-2015-01-01-2015-01-03-slim.ndjson
+|       |   |   |   datacite-2015-01-04-2015-01-10-slim.ndjson
+|       |   |   |   
+|       |   |   \---.ipynb_checkpoints
+|       |   |           datacite-2014-12-28-2014-12-31-slim-checkpoint.ndjson
+|       |   |           
+|       |   +---harvest_date_range_test
+|       |   |   |   datacite-2014-12-28-2014-12-31.ndjson
+|       |   |   |   datacite-2015-01-01-2015-01-03.ndjson
+|       |   |   |   datacite-2015-01-04-2015-01-10.ndjson
+|       |   |   |   
+|       |   |   \---.ipynb_checkpoints
+|       |   |           datacite-2015-01-04-2015-01-10-checkpoint.ndjson
+|       |   |           
+|       |   \---harvest_doi_list_test
+|       |       |   datacite-batch-0000.ndjson
+|       |       |   datacite-batch-0001.ndjson
+|       |       |   
+|       |       \---.ipynb_checkpoints
+|       |               datacite-batch-0000-checkpoint.ndjson
+|       |               
+|       +---emdb
+|       |   +---batch_slim_test
+|       |   |   |   emdb_deposited_2014-01-01_to_2014-12-31-slim.ndjson
+|       |   |   |   emdb_deposited_2014-01-01_to_2025-12-31-slim.ndjson
+|       |   |   |   
+|       |   |   \---.ipynb_checkpoints
+|       |   |           emdb_deposited_2014-01-01_to_2014-12-31-slim-checkpoint.ndjson
+|       |   |           
+|       |   \---harvest_date_range_test
+|       |       |   emdb_deposited_2014-01-01_to_2014-12-31.ndjson
+|       |       |   emdb_deposited_2014-01-01_to_2025-12-31.ndjson
+|       |       |   
+|       |       \---.ipynb_checkpoints
+|       |               emdb_deposited_2014-01-01_to_2014-12-31-checkpoint.ndjson
+|       |               
+|       \---github
+|           +---.ipynb_checkpoints
+|           \---find_mentions_demo_datasets
+|               |   mentions.ndjson
+|               |   
+|               \---.ipynb_checkpoints
+|                       mentions-checkpoint.ndjson
+|                       
++---pipeline-old
+|   |   citations copy.py
+|   |   citations.py
+|   |   fair.py
+|   |   normalize.py
+|   |   __init__.py
+|   |   
+|   +---.ipynb_checkpoints
+|   |       citations-checkpoint.py
+|   |       emdb-checkpoint.py
+|   |       fair-checkpoint.py
+|   |       mentions-checkpoint.py
+|   |       normalize-checkpoint.py
+|   |       
+|   \---__pycache__
+|           citations.cpython-311.pyc
+|           datacite.cpython-311.pyc
+|           emdb.cpython-311.pyc
+|           mentions.cpython-311.pyc
+|           normalize.cpython-311.pyc
+|           __init__.cpython-311.pyc
+|           
+\---src
+    +---sindex
+    |   |   __init__.py
+    |   |   
+    |   +---config
+    |   |   |   settings.py
+    |   |   |   
+    |   |   \---__pycache__
+    |   |           settings.cpython-311.pyc
+    |   |           
+    |   +---core
+    |   |   |   dates.py
+    |   |   |   http.py
+    |   |   |   ids.py
+    |   |   |   io.py
+    |   |   |   
+    |   |   \---__pycache__
+    |   |           dates.cpython-311.pyc
+    |   |           http.cpython-311.pyc
+    |   |           ids.cpython-311.pyc
+    |   |           io.cpython-311.pyc
+    |   |           
+    |   +---enrich
+    |   |   \---pubdate
+    |   |       |   jobs.py
+    |   |       |   
+    |   |       \---__pycache__
+    |   |               jobs.cpython-311.pyc
+    |   |               
+    |   +---metrics
+    |   |   |   dedup.py
+    |   |   |   mentions.py
+    |   |   |   normalization.py
+    |   |   |   weights.py
+    |   |   |   
+    |   |   \---__pycache__
+    |   |           citations.cpython-311.pyc
+    |   |           dedup.cpython-311.pyc
+    |   |           mentions.cpython-311.pyc
+    |   |           weights.cpython-311.pyc
+    |   |           
+    |   +---sources
+    |   |   +---crossref
+    |   |   |   |   client.py
+    |   |   |   |   constants.py
+    |   |   |   |   discovery.py
+    |   |   |   |   
+    |   |   |   \---__pycache__
+    |   |   |           client.cpython-311.pyc
+    |   |   |           constants.cpython-311.pyc
+    |   |   |           discovery.cpython-311.pyc
+    |   |   |           
+    |   |   +---datacite
+    |   |   |   |   client.py
+    |   |   |   |   constants.py
+    |   |   |   |   discovery.py
+    |   |   |   |   jobs.py
+    |   |   |   |   normalize.py
+    |   |   |   |   
+    |   |   |   \---__pycache__
+    |   |   |           client.cpython-311.pyc
+    |   |   |           constants.cpython-311.pyc
+    |   |   |           discovery.cpython-311.pyc
+    |   |   |           jobs.cpython-311.pyc
+    |   |   |           normalize.cpython-311.pyc
+    |   |   |           registry.cpython-311.pyc
+    |   |   |           
+    |   |   +---emdb
+    |   |   |   |   client.py
+    |   |   |   |   constants.py
+    |   |   |   |   discovery.py
+    |   |   |   |   jobs.py
+    |   |   |   |   normalize.py
+    |   |   |   |   
+    |   |   |   \---__pycache__
+    |   |   |           client.cpython-311.pyc
+    |   |   |           constants.cpython-311.pyc
+    |   |   |           discovery.cpython-311.pyc
+    |   |   |           jobs.cpython-311.pyc
+    |   |   |           normalize.cpython-311.pyc
+    |   |   |           
+    |   |   +---fuji
+    |   |   |   |   client.py
+    |   |   |   |   constants.py
+    |   |   |   |   discovery.py
+    |   |   |   |   jobs.py
+    |   |   |   |   normalize.py
+    |   |   |   |   
+    |   |   |   \---__pycache__
+    |   |   |           client.cpython-311.pyc
+    |   |   |           constants.cpython-311.pyc
+    |   |   |           discovery.cpython-311.pyc
+    |   |   |           jobs.cpython-311.pyc
+    |   |   |           normalize.cpython-311.pyc
+    |   |   |           
+    |   |   +---github
+    |   |   |   |   client.py
+    |   |   |   |   constants.py
+    |   |   |   |   discovery.py
+    |   |   |   |   jobs.py
+    |   |   |   |   
+    |   |   |   \---__pycache__
+    |   |   |           client.cpython-311.pyc
+    |   |   |           constants.cpython-311.pyc
+    |   |   |           discovery.cpython-311.pyc
+    |   |   |           jobs.cpython-311.pyc
+    |   |   |           
+    |   |   +---mdc
+    |   |   |   |   client.py
+    |   |   |   |   constants.py
+    |   |   |   |   discovery.py
+    |   |   |   |   jobs.py
+    |   |   |   |   
+    |   |   |   \---__pycache__
+    |   |   |           client.cpython-311.pyc
+    |   |   |           constants.cpython-311.pyc
+    |   |   |           discovery.cpython-311.pyc
+    |   |   |           jobs.cpython-311.pyc
+    |   |   |           
+    |   |   \---openalex
+    |   |       |   client.py
+    |   |       |   constants.py
+    |   |       |   discovery.py
+    |   |       |   jobs.py
+    |   |       |   normalize.py
+    |   |       |   
+    |   |       \---__pycache__
+    |   |               client.cpython-311.pyc
+    |   |               constants.cpython-311.pyc
+    |   |               discovery.cpython-311.pyc
+    |   |               jobs.cpython-311.pyc
+    |   |               normalize.cpython-311.pyc
+    |   |               
+    |   \---__pycache__
+    |           __init__.cpython-311.pyc
+    |           
+    \---sindex.egg-info
+            dependency_links.txt
+            PKG-INFO
+            SOURCES.txt
+            top_level.txt
+            

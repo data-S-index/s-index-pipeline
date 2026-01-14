@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import gzip
 import json
 import os
 import time
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Iterable
+from typing import Dict, Iterable, List
 
 import requests
 
@@ -16,6 +18,8 @@ from sindex.sources.datacite.discovery import (
     stream_datacite_records,
 )
 from sindex.sources.datacite.normalize import slim_datacite_record
+
+from .normalize import datacite_citations_block_to_records
 
 
 def harvest_datacite_doi_list_to_ndjson(
@@ -340,3 +344,16 @@ def batch_slim_datacite_record_to_ndjson(
         f"time={dt:.1f}s rate≈{rate:,}/s → {summary['output_dir']}"
     )
     return summary
+
+
+def find_citations_dc_from_citation_block(
+    target_doi: str,
+    citations: Dict[str, list] | None,
+    dataset_pub_date: str = "",
+) -> List[Dict[str, object]]:
+    """
+    Wrapper
+    """
+    return datacite_citations_block_to_records(
+        target_doi=target_doi, dataset_pub_date=dataset_pub_date, citations=citations
+    )

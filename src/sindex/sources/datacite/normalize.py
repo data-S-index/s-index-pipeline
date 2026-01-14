@@ -1,5 +1,12 @@
+from __future__ import annotations
+
+from typing import Dict, List
+
 from sindex.core.dates import _norm_date_iso
-from sindex.core.ids import _norm_doi
+from sindex.core.ids import _norm_doi, _norm_doi_url
+from sindex.enrich.pubdate.jobs import best_publication_date_for_doi
+from sindex.metrics.dedup import dedupe_citations_by_link
+from sindex.metrics.weights import citation_weight
 
 
 def slim_datacite_record(metadata: dict) -> dict:
@@ -195,3 +202,53 @@ def slim_datacite_record(metadata: dict) -> dict:
             out.pop("citations")
 
     return out
+
+
+def datacite_citations_block_to_records(
+    *,
+    target_doi: str,
+    dataset_pub_date: str,
+    citations: Dict[str, list] | None,
+) -> List[Dict[str, object]]:
+    """
+    Convert a slimmed DataCite citations block into normalized citation records.
+    """
+    results: List[Dict[str, object]] = []
+
+    # DOIs → normalize + fetch date
+    for citation_link_raw in (citations or {}).get("dois", []) or []:
+        citation_doi = _norm_doi(citation_link_raw)
+        if not citation_doi:
+            continue
+
+        citation_link = _norm_doi_url(citation_doi)
+        rec: Dict[str, object] = {
+            "doi": target_doi,
+            "source": ["datacite"],
+            "citation_link": citation_link,
+        }
+
+        citation_date = best_publication_date_for_doi(citation_doi)
+        if citation_date:
+            rec["citation_date"] = citation_date
+
+        rec["citation_weight"] = citation_weight(dataset_pub_date, citation_date)
+        results.append(rec)
+
+    # Other identifiers → keep id only
+    for obj in (citations or {}).get("other", []) or []:
+        if not isinstance(obj, dict):
+            continue
+        id_val = (obj.get("id") or "").strip()
+        if not id_val:
+            continue
+        results.append(
+            {
+                "doi": target_doi,
+                "source": ["datacite"],
+                "citation_link": id_val,
+                "citation_weight": 1.0,
+            }
+        )
+
+    return dedupe_citations_by_link(results)
