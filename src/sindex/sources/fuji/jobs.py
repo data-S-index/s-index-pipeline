@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import requests
 
-from .constants import FUJI_DEFAULT_BASE_URL
+from .constants import DEFAULT_PASSWORD, DEFAULT_USERNAME, FUJI_DEFAULT_BASE_URL
 from .discovery import fair_evaluate_doi_url
 from .normalize import fuji_report_from_response
 
@@ -11,8 +11,8 @@ def fair_evaluation_report(
     doi_or_url: str,
     *,
     base_url: str = FUJI_DEFAULT_BASE_URL,
-    username: str | None = None,
-    password: str | None = None,
+    username: str | None = DEFAULT_USERNAME,
+    password: str | None = DEFAULT_PASSWORD,
     session: requests.Session | None = None,
 ) -> dict:
     """
