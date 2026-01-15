@@ -1,27 +1,27 @@
 # S-index Python
 
 ## About
-This repo contains Python code for collecting the data necessary to compute Dataset index and S-index.
+This repo contains Python code for collecting the data necessary to compute Dataset-index and S-index.
 
 ## Repository Structure
 
 ```text
 .
-├── notebooks/          # Jupyter notebooks for testing src code
+├── notebooks/           # Jupyter notebooks for testing src code
 ├── src/
-│   └── sindex/       # Core Python code
+│   └── sindex/          # Python code
 │       ├── __init__.py
-│       ├── core # core code for normalizing ids, dates, etc.
-│       ├── source # Functions used across multiple files
+│       ├── core         # Core code for normalizing ids, dates, etc.
+│       ├── sources      # Code for harvesting data from sources like DataCite, OpenAlex, GitHub
         ```
-├── pyproject.toml      # Project configuration 
+├── pyproject.toml       # Project configuration 
 └── README.md
 ```
 
 
 ## Installation & Setup
 
-We recommend using Anaconda to create and manage your development environment and using JupyterLab to run the notebook. All the subsequent instructions are provided assuming you are using [Anaconda (Python 3 version)](https://www.anaconda.com/products/individual) and JupyterLab.
+We recommend using Anaconda to create and manage your development environment and using JupyterLab to run the notebooks. All the subsequent instructions are provided assuming you are using [Anaconda (Python 3 version)](https://www.anaconda.com/products/individual) and JupyterLab.
 
 ### 1. Clone the repository
 
@@ -30,7 +30,7 @@ git clone sindex-pipeline
 cd sindex-pipeline
 ```
 
-### 2. Download MDC DB
+### 2. Download Make Data Count (MDC) DB
 
 Donwload the DuckDB database created from the MDC corpus [here](https://drive.google.com/file/d/1UOLUw24OL0XPlfYp9SYpa-GAKJUIcRVe/view?usp=sharing) and add it under `input/mdc/`.
 
