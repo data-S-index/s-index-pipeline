@@ -1,0 +1,13 @@
+name: sindex
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - requests=2.32.5
+  - urllib3=2.5.0
+  - python-dateutil>=2.9
+  - ijson=3.4.0
+  - tzdata
+  - pip
+  - pip:
+      - types-requests

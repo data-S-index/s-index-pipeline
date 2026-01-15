@@ -1,0 +1,7 @@
+# Ignore all ipynb_checkpoints folders
+.ipynb_checkpoints/
+
+# Ignore all __pycache__ folders
+__pycache__/
+/input/mdc-full
+input/mdc/mdc_index.duckdb

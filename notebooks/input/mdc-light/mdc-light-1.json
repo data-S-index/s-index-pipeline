@@ -1,0 +1,173 @@
+[
+    {
+        "id": "03200481-870b-47bb-9abb-16cf805f33ee",
+        "created": "2023-09-26T00:43:25.037+00:00",
+        "updated": "2023-11-11T22:26:00.707+00:00",
+        "repository": {
+            "title": "European Nucleotide Archive",
+            "external_id": null
+        },
+        "publisher": {
+            "title": "MDPI AG",
+            "external_id": null
+        },
+        "journal": {
+            "title": "International Journal of Molecular Sciences",
+            "external_id": null
+        },
+        "title": null,
+        "dataset": "SQ22536",
+        "publication": "https://doi.org/10.3390/ijms19061818",
+        "publishedDate": "2018-06-20T00:00:00+00:00",
+        "source": "czi",
+        "affiliations": [],
+        "funders": [],
+        "subjects": [
+            "basic medicine",
+            "biological sciences"
+        ]
+    },
+    {
+        "id": "0320067a-d8d9-4bf0-83f5-0e262ab7b489",
+        "created": "2025-07-24T14:09:22.555+00:00",
+        "updated": "2025-07-24T14:09:22.555+00:00",
+        "repository": {
+            "title": "PhysioNet",
+            "external_id": null
+        },
+        "publisher": {
+            "title": "Oxford University Press (OUP)",
+            "external_id": null
+        },
+        "journal": {
+            "title": "Journal of the American Medical Informatics Association",
+            "external_id": null
+        },
+        "title": "MIMIC-IV",
+        "dataset": "https://doi.org/10.13026/kpb9-mt58",
+        "publication": "https://doi.org/10.1093/jamia/ocae303",
+        "publishedDate": "2024-12-13T00:00:00+00:00",
+        "source": "eupmc",
+        "affiliations": [
+            {
+                "title": "Massachusetts Institute of Technology",
+                "external_id": "https://ror.org/042nb2s44",
+                "ror_name": "Massachusetts Institute of Technology",
+                "ror_id": "https://ror.org/042nb2s44"
+            },
+            {
+                "title": "Beth Israel Deaconess Medical Center, Boston, USA",
+                "external_id": null,
+                "ror_name": "Beth Israel Deaconess Medical Center",
+                "ror_id": "https://ror.org/04drvxt59"
+            },
+            {
+                "title": "Massachusetts Institute of Technology, Cambridge, USA",
+                "external_id": null,
+                "ror_name": "Massachusetts Institute of Technology",
+                "ror_id": "https://ror.org/042nb2s44"
+            },
+            {
+                "title": "Harvard Medical School",
+                "external_id": "https://ror.org/03wevmz92",
+                "ror_name": "Harvard Medical School",
+                "ror_id": "https://ror.org/03wevmz92"
+            },
+            {
+                "title": "Beth Israel Deaconess Medical Center",
+                "external_id": "https://grid.ac/institutes/grid.239395.7",
+                "ror_name": "Beth Israel Deaconess Medical Center",
+                "ror_id": "https://ror.org/04drvxt59"
+            },
+            {
+                "title": "Massachusetts Institute of Technology, USA",
+                "external_id": null,
+                "ror_name": null,
+                "ror_id": null
+            }
+        ],
+        "funders": [],
+        "subjects": []
+    },
+    {
+        "id": "1616022f-9a55-49c6-bc10-0dd316850713",
+        "created": "2023-09-11T15:10:52.114+00:00",
+        "updated": "2023-09-11T15:10:52.114+00:00",
+        "repository": {
+            "title": "Electron Microscopy Public Image Archive (EMPIAR)",
+            "external_id": null
+        },
+        "publisher": {
+            "title": "Wiley",
+            "external_id": null
+        },
+        "journal": {
+            "title": "FEBS Letters",
+            "external_id": null
+        },
+        "title": null,
+        "dataset": "https://emdb-empiar.org/emd-1003",
+        "publication": "https://doi.org/10.1002/1873-3468.13086",
+        "publishedDate": "2018-05-25T00:00:00+00:00",
+        "source": "czi",
+        "affiliations": [],
+        "funders": [],
+        "subjects": [
+            "biological sciences",
+            "basic medicine"
+        ]
+    },
+    {
+        "id": "1ba799bf-8290-49c2-bda3-c2b3739fe4d5",
+        "created": "2025-07-25T16:38:25.337+00:00",
+        "updated": "2025-08-13T20:53:07.11641+00:00",
+        "repository": {
+            "title": "PhysioNet",
+            "external_id": null
+        },
+        "publisher": {
+            "title": "Frontiers Media SA",
+            "external_id": null
+        },
+        "journal": {
+            "title": "Frontiers in Cellular and Infection Microbiology",
+            "external_id": null
+        },
+        "title": null,
+        "dataset": "https://doi.org/10.13026/kpb9-mt58",
+        "publication": "https://doi.org/10.3389/fcimb.2025.1545979",
+        "publishedDate": "2025-04-17T00:00:00+00:00",
+        "source": "eupmc",
+        "affiliations": [],
+        "funders": [],
+        "subjects": []
+    },
+    {
+        "id": "1ba79ddb-7bad-4c7e-ad85-20f27a5d467d",
+        "created": "2023-09-26T16:39:42.337+00:00",
+        "updated": "2023-09-26T16:39:42.337+00:00",
+        "repository": {
+            "title": "European Nucleotide Archive",
+            "external_id": null
+        },
+        "publisher": {
+            "title": "MDPI AG",
+            "external_id": null
+        },
+        "journal": {
+            "title": "Pathogens",
+            "external_id": null
+        },
+        "title": null,
+        "dataset": "OP288111",
+        "publication": "https://doi.org/10.3390/pathogens12020175",
+        "publishedDate": "2023-01-23T00:00:00+00:00",
+        "source": "czi",
+        "affiliations": [],
+        "funders": [],
+        "subjects": [
+            "basic medicine",
+            "biological sciences"
+        ]
+    }
+]

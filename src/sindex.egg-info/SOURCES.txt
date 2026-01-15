@@ -1,0 +1,13 @@
+README.md
+pyproject.toml
+src/sindex/__init__.py
+src/sindex.egg-info/PKG-INFO
+src/sindex.egg-info/SOURCES.txt
+src/sindex.egg-info/dependency_links.txt
+src/sindex.egg-info/top_level.txt
+src/sindex/config/settings.py
+src/sindex/core/dates.py
+src/sindex/core/http.py
+src/sindex/core/ids.py
+src/sindex/sources/datacite/constants.py
+src/sindex/sources/datacite/registry.py
