@@ -109,16 +109,19 @@ def fetch_datacite_pubdate(doi: str, session: requests.Session | None = None) ->
         ISO-8601 string (normalized) if available, else "".
     """
     datacite_record = get_datacite_doi_record(doi)
-    attrs = datacite_record.get("attributes") or {}
-    if attrs:
-        # Try "created", "published", or "issued" dates one after the other
-        for key in ("created", "published", "issued"):
-            val = attrs.get(key)
-            if val:
-                try:
-                    return _norm_date_iso(val)
-                except Exception:
-                    # keep looking at other keys if one fails to parse
-                    continue
-    else:
+    if not datacite_record:  # None (404 / invalid DOI)
         return ""
+
+    attrs = datacite_record.get("attributes") or {}
+
+    # Try "created", "published", or "issued" dates in this order of preference
+    for key in ("created", "published", "issued"):
+        val = attrs.get(key)
+        if not val:
+            continue
+        try:
+            return _norm_date_iso(val)
+        except Exception:
+            continue
+
+    return ""

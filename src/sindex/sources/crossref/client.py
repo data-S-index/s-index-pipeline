@@ -36,4 +36,3 @@ def get_crossref_record_by_norm_doi(
 
     resp.raise_for_status()
     return resp.json()
-    return resp.json()

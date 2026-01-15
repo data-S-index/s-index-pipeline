@@ -48,11 +48,12 @@ def fetch_crossref_pubdate(doi: str, session: requests.Session | None = None) ->
         ISO-8601 string (normalized) if available, else "".
     """
     crossref_record = get_crossref_doi_record(doi, session=session)
-    msg = (crossref_record or {}).get("message") or {}
-    if not msg:
+    if not crossref_record:  # None / not found
         return ""
 
-    # Prefer publisher-declared "published" date first then tries "issued", "published-online", "published-print"
+    msg = crossref_record.get("message") or {}
+
+    # Prefer publisher-declared dates in order
     for key in ("published", "issued", "published-online", "published-print"):
         dp = (msg.get(key) or {}).get("date-parts")
         iso = _as_iso_from_dateparts(dp) if dp else ""

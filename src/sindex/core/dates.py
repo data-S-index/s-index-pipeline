@@ -160,3 +160,11 @@ def norm_date_iso_db(x: Optional[str]) -> Optional[str]:
         return y if y else None
     except Exception:
         return None
+
+
+def _dt_utc_or_today(s: Optional[str], *, today_dt: datetime) -> datetime:
+    """
+    if missing/invalid -> today_dt (00:00 UTC).
+    """
+    dt = _to_datetime_utc(s)
+    return dt if dt is not None else today_dt

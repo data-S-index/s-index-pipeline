@@ -55,7 +55,29 @@ def get_openalex_record(
     """
     url = f"{OA_BASE_URL}{path}"
     r = session.get(url, params=params, timeout=timeout)
-    return r.status_code, r.json()
+    if r.status_code == 404:
+        return None
+
+    try:
+        r.raise_for_status()
+    except requests.HTTPError as e:
+        snippet = (r.text or "")[:300]
+        raise requests.HTTPError(
+            f"OpenAlex HTTP {r.status_code} for {r.url}. "
+            f"Content-Type={r.headers.get('Content-Type')!r}. "
+            f"Body starts: {snippet!r}",
+            response=r,
+        ) from e
+
+    try:
+        return r.json()
+    except ValueError as e:
+        snippet = (r.text or "")[:300]
+        raise RuntimeError(
+            f"OpenAlex returned non-JSON for {r.url}. "
+            f"Content-Type={r.headers.get('Content-Type')!r}. "
+            f"Body starts: {snippet!r}"
+        ) from e
 
 
 def fetch_openalex_topics_page(

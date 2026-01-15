@@ -205,10 +205,9 @@ def slim_datacite_record(metadata: dict) -> dict:
 
 
 def datacite_citations_block_to_records(
-    *,
     target_doi: str,
-    dataset_pub_date: str,
     citations: Dict[str, list] | None,
+    dataset_pub_date: str | None = None,
 ) -> List[Dict[str, object]]:
     """
     Convert a slimmed DataCite citations block into normalized citation records.

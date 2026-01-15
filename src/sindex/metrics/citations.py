@@ -6,38 +6,38 @@ from typing import Any, Iterable, Optional
 from sindex.core.dates import _to_datetime_utc
 
 
-def merge_mentions_dicts(
+def merge_citations_dicts(
     inputs: Iterable[Iterable[dict[str, Any]] | dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """
-    Merge multiple collections of mention records (in-memory) into a single
+    Merge multiple collections of citation records (in-memory) into a single
     deduplicated list.
 
     Each input can be:
-      - a list/iterable of mention dicts, OR
-      - a single mention dict (treated as one record)
+      - a list/iterable of citation dicts, OR
+      - a single citation dict (it will be treated as one record)
 
-    Expected record shape:
+    Expected record shape (generic):
         {
             "dataset_id": <str>,
             "source": [<str>] or <str> or missing,
-            "mention_link": <str>,
-            "mention_date": <ISO string or empty> (optional),
-            "mention_weight": <any numeric> (optional)
+            "citation_link": <str>,
+            "citation_date": <ISO string or empty> (optional),
+            "citation_weight": <any numeric> (optional)
         }
 
-    Dedup key: (dataset_id, mention_link)
+    Dedup key: (dataset_id, citation_link)
 
     Merge behavior:
       - "source" becomes union of sources (sorted)
-      - "mention_date" selection:
+      - "citation_date" selection:
           * prefer any dated record over no-date record
           * if both dated, keep earliest date
-          * if final selection has no date, omit "mention_date" from output
-      - "mention_weight" is taken from the selected record (the date winner)
+          * if final selection has no date, omit "citation_date" from output
+      - "citation_weight" is taken from the selected record (the date winner)
 
     Returns:
-      List of merged mention records (order not guaranteed).
+      List of merged records (order not guaranteed).
     """
     merged: dict[tuple[str, str], dict[str, Any]] = {}
     best_dt: dict[tuple[str, str], Optional[datetime]] = {}
@@ -59,7 +59,7 @@ def merge_mentions_dicts(
                 continue
 
             dataset_id = rec.get("dataset_id")
-            link = rec.get("mention_link")
+            link = rec.get("citation_link")
             if not dataset_id or not link:
                 continue
 
@@ -71,7 +71,7 @@ def merge_mentions_dicts(
                 src = [src]
             new_sources = {str(s) for s in src if s}
 
-            date_str = rec.get("mention_date") or ""
+            date_str = rec.get("citation_date") or ""
             dt = _to_datetime_utc(date_str)
 
             existing = merged.get(key)
@@ -79,11 +79,11 @@ def merge_mentions_dicts(
                 entry: dict[str, Any] = {
                     "dataset_id": key[0],
                     "source": sorted(new_sources),
-                    "mention_link": key[1],
-                    "mention_weight": rec.get("mention_weight"),
+                    "citation_link": key[1],
+                    "citation_weight": rec.get("citation_weight"),
                 }
                 if dt is not None:
-                    entry["mention_date"] = str(rec.get("mention_date"))
+                    entry["citation_date"] = str(rec.get("citation_date"))
                 merged[key] = entry
                 best_dt[key] = dt
                 continue
@@ -103,11 +103,11 @@ def merge_mentions_dicts(
                 replace = True
 
             if replace:
-                existing["mention_weight"] = rec.get("mention_weight")
+                existing["citation_weight"] = rec.get("citation_weight")
                 if dt is not None:
-                    existing["mention_date"] = str(rec.get("mention_date"))
+                    existing["citation_date"] = str(rec.get("citation_date"))
                 else:
-                    existing.pop("mention_date", None)
+                    existing.pop("citation_date", None)
                 best_dt[key] = dt
 
     return list(merged.values())

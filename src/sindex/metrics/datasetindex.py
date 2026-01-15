@@ -1,50 +1,137 @@
-from sindex.core.ids import _norm_doi, _norm_doi_url, is_working_doi
-from sindex.sources.datacite.discovery import get_datacite_doi_record
-from sindex.sources.datacite.normalize import slim_datacite_record
-from sindex.sources.fuji.jobs import fair_evaluation_report
-from sindex.sources.openalex.jobs import get_primary_topic_for_doi
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any
+
+from sindex.core.dates import _dt_utc_or_today, _to_datetime_utc
 
 
-def dataset_index_from_doi(doi):
-    # Check valid DOI and normalize
-    norm_doi = _norm_doi(doi)
-    if not norm_doi:
-        raise ValueError(f"Invalid DOI format:{doi}")
-    norm_doi_url = _norm_doi_url(norm_doi)
-    if not is_working_doi(norm_doi_url):
-        raise ValueError(f"'{norm_doi_url}' is not a working DOI.")
+def dataset_index(
+    Fi: float,
+    FT: float,
+    Ciw: float,
+    CTw: float,
+    Miw: float,
+    MTw: float,
+) -> float:
+    """
+    Compute the dataset index:
 
-    dataset_report = {}
-    dataset_report["doi"] = doi
-    dataset_report["norm_doi"] = norm_doi
-    dataset_report["norm_doi_url"] = norm_doi_url
+        (1/3) * (Fi / FT + Ciw / CTw + Miw / MTw)
 
-    # Get metadata from DataCite and create slim version
-    rec = get_datacite_doi_record(norm_doi)
-    slim = slim_datacite_record(rec)
-    pubdate = slim["publication_date"]
+    Args:
+        Fi: FAIRness score for the dataset, normalized to [0, 1]
+        FT: FAIRness threshold (field-weighted, median in [0, 1])
+        Ciw: Cumulative weighted citation count
+        CTw: Citation threshold (field-weighted)
+        Miw: Cumulative weighted alternative mentions count
+        MTw: Mentions threshold (field-weighted)
 
-    dataset_report["metadata"] = slim
+    Returns:
+        Dataset index score (float)
 
-    # Get field (OpenAlex topic)
-    topic_result = get_primary_topic_for_doi(norm_doi)
-    if topic_result:
-        if topic_result["topic_score"] > 0.5:
-            dataset_report["topic"] = topic_result
-            topic_id = topic_result["topic_id"]
+    Raises:
+        ValueError: If any threshold is non-positive or if inputs are invalid.
+    """
+    if FT <= 0 or CTw <= 0 or MTw <= 0:
+        raise ValueError("All thresholds (FT, CTw, MTw) must be > 0")
+
+    if not (0.0 <= Fi <= 1.0):
+        raise ValueError(f"Fi must be normalized to [0, 1]; got {Fi}")
+
+    if Ciw < 0 or Miw < 0:
+        raise ValueError("Ciw and Miw must be >= 0")
+
+    return ((Fi / FT) + (Ciw / CTw) + (Miw / MTw)) / 3.0
+
+
+def dataset_index_timeseries(
+    *,
+    Fi: float,
+    citations: list[dict[str, Any]] | None = None,
+    mentions: list[dict[str, Any]] | None = None,
+    pubdate: str | None = None,
+    FT: float = 1.0,
+    CTw: float = 1.0,
+    MTw: float = 1.0,
+    citation_date_key: str = "citation_date",
+    citation_weight_key: str = "citation_weight",
+    mention_date_key: str = "mention_date",
+    mention_weight_key: str = "mention_weight",
+) -> list[dict[str, Any]]:
+    """
+    Output: [{"date": <iso>, "dataset_index": <float>}, ...]
+
+    - First point at pubdate (if provided).
+    - Next points at each unique event date.
+    - Missing/invalid event date -> today's date (day of computation, 00:00 UTC).
+    """
+    citations = citations or []
+    mentions = mentions or []
+
+    # today's date at 00:00 UTC (stable for the run)
+    now_utc = datetime.now(timezone.utc)
+    today_dt = datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc)
+
+    # Normalize events
+    events: list[tuple[datetime, str, float]] = []  # (dt, type, weight)
+
+    for c in citations:
+        dt = _dt_utc_or_today(c.get(citation_date_key), today_dt=today_dt)
+        w = float(c.get(citation_weight_key, 0.0) or 0.0)
+        events.append((dt, "citation", w))
+
+    for m in mentions:
+        dt = _dt_utc_or_today(m.get(mention_date_key), today_dt=today_dt)
+        w = float(m.get(mention_weight_key, 0.0) or 0.0)
+        events.append((dt, "mention", w))
+
+    events.sort(key=lambda t: t[0])
+
+    # Evaluation dates
+    eval_dates: list[datetime] = []
+    seen: set[datetime] = set()
+
+    pub_dt = (
+        _to_datetime_utc(pubdate) if pubdate else None
+    )  # <-- your existing function
+    if pub_dt is not None:
+        eval_dates.append(pub_dt)
+        seen.add(pub_dt)
+
+    for dt, _, _ in events:
+        if dt not in seen:
+            eval_dates.append(dt)
+            seen.add(dt)
+
+    # Ensure pubdate is first point if provided; rest sorted ascending
+    if pub_dt is not None:
+        rest = sorted([d for d in eval_dates if d != pub_dt])
+        eval_dates = [pub_dt] + rest
     else:
-        dataset_report["topic"] = None
-        topic_id = None
+        eval_dates = sorted(eval_dates)
 
-    # Get F-UJI FAIR score
-    fair_report = fair_evaluation_report(norm_doi_url)
-    dataset_report["topic"] = fair_report
-    fair_score = fair_report["fair_score"]
+    # Compute cumulative sums and series
+    out: list[dict[str, Any]] = []
+    ciw = 0.0
+    miw = 0.0
+    i = 0
 
-    # Citations
+    for dt in eval_dates:
+        while i < len(events) and events[i][0] <= dt:
+            _, typ, w = events[i]
+            if typ == "citation":
+                ciw += w
+            else:
+                miw += w
+            i += 1
 
-    # Mentions
+        idx = dataset_index(Fi=Fi, FT=FT, Ciw=ciw, CTw=CTw, Miw=miw, MTw=MTw)
+        out.append(
+            {
+                "date": dt.isoformat().replace("+00:00", "Z"),
+                "dataset_index": idx,
+            }
+        )
 
-    # Normalization factors
-
-    # Dataset Index
+    return out

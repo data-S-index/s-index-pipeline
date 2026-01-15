@@ -29,16 +29,7 @@ def get_openalex_doi_record(
 
     s = session or make_openalex_session()
     params = {"mailto": mailto} if mailto else None
-    status, payload = get_openalex_record(f"/works/{doi_url}", session=s, params=params)
-
-    if status == 404:
-        return None
-    if status >= 400:
-        # mimic requests.raise_for_status behavior but preserve payload for debugging
-        raise requests.HTTPError(
-            f"OpenAlex error {status} for /works/{{doi_url}}", response=None
-        )
-
+    payload = get_openalex_record(f"/works/{doi_url}", session=s, params=params)
     return payload
 
 
@@ -93,13 +84,7 @@ def get_all_citing_works_oa(
         if mailto:
             params["mailto"] = mailto
 
-        status, payload = get_openalex_record("/works", session=session, params=params)
-        if status >= 400:
-            raise requests.HTTPError(
-                f"OpenAlex error {status} for /works?filter=cites:{openalex_id}",
-                response=None,
-            )
-
+        payload = get_openalex_record("/works", session=session, params=params)
         results.extend(payload.get("results", []) or [])
         cursor = (payload.get("meta") or {}).get("next_cursor")
         if not cursor:
@@ -119,21 +104,25 @@ def fetch_openalex_pubdate(doi: str, session: requests.Session | None = None) ->
     Returns:
         ISO-8601 string (normalized) if available, else "".
     """
-    data = get_openalex_doi_record(doi)
+    data = get_openalex_doi_record(doi, session=session)
+    if not data:  # None (invalid DOI or 404)
+        return ""
+
+    # 1) Prefer publication_date (YYYY-MM-DD)
     pub_date = data.get("publication_date") or ""
     if pub_date:
         try:
             return _norm_date_iso(pub_date)
         except Exception:
-            # If for some reason this is malformed, fall back to year
+            # If issue, fall back to year
             pass
 
-    # 2) Fallback: publication_year -> year-only ISO
+    # 2) Fallback year-only ISO
     year = data.get("publication_year")
-    if year:
+    if year is not None and year != "":
         try:
             return _norm_date_iso(str(year))
         except Exception:
             return ""
-    else:
-        return ""
+
+    return ""
