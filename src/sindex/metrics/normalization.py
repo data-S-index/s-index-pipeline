@@ -110,11 +110,11 @@ def get_topic_year_norm_factors(
     if topic_id:
         row = _fetch_norm_row(con, table=table, topic_id=topic_id, year=year_used)
         if row:
-            tid, yy, ft, cwt, mwt = row
+            tid, yy, ft, ctw, mtw = row
             return {
                 "FT": float(ft),
-                "CwT": float(cwt),
-                "MwT": float(mwt),
+                "CTw": float(ctw),
+                "MTw": float(mtw),
                 "topic_id_used": tid,
                 "year_used": yy,
                 "topic_id_requested": topic_id,
@@ -125,11 +125,11 @@ def get_topic_year_norm_factors(
     # ALL + year_used
     row = _fetch_norm_row(con, table=table, topic_id=fallback_topic_id, year=year_used)
     if row:
-        tid, yy, ft, cwt, mwt = row
+        tid, yy, ft, ctw, mtw = row
         return {
             "FT": float(ft),
-            "CwT": float(cwt),
-            "MwT": float(mwt),
+            "CTw": float(ctw),
+            "MTw": float(mtw),
             "topic_id_used": tid,
             "year_used": yy,
             "topic_id_requested": topic_id,
@@ -144,11 +144,11 @@ def get_topic_year_norm_factors(
                 con, table=table, topic_id=topic_id, year=int(unknown_year)
             )
             if row:
-                tid, yy, ft, cwt, mwt = row
+                tid, yy, ft, ctw, mtw = row
                 return {
                     "FT": float(ft),
-                    "CwT": float(cwt),
-                    "MwT": float(mwt),
+                    "CTw": float(ctw),
+                    "MTw": float(mtw),
                     "topic_id_used": tid,
                     "year_used": yy,
                     "topic_id_requested": topic_id,
@@ -160,11 +160,11 @@ def get_topic_year_norm_factors(
             con, table=table, topic_id=fallback_topic_id, year=int(unknown_year)
         )
         if row:
-            tid, yy, ft, cwt, mwt = row
+            tid, yy, ft, ctw, mtw = row
             return {
                 "FT": float(ft),
-                "CwT": float(cwt),
-                "MwT": float(mwt),
+                "CTw": float(ctw),
+                "MTw": float(mtw),
                 "topic_id_used": tid,
                 "year_used": yy,
                 "topic_id_requested": topic_id,

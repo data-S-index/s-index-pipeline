@@ -8,16 +8,20 @@ from sindex.core.dates import _dt_utc_or_today, _to_datetime_utc
 
 def dataset_index(
     Fi: float,
-    FT: float,
     Ciw: float,
-    CTw: float,
     Miw: float,
-    MTw: float,
+    *,
+    FT: float = 0.5,
+    CTw: float = 1.0,
+    MTw: float = 1.0,
 ) -> float:
     """
     Compute the dataset index:
 
         (1/3) * (Fi / FT + Ciw / CTw + Miw / MTw)
+
+    Threshold defaults:
+      FT=0.5, CTw=1.0, MTw=1.0
 
     Args:
         Fi: FAIRness score for the dataset, normalized to [0, 1]
@@ -30,17 +34,20 @@ def dataset_index(
     Returns:
         Dataset index score (float)
 
-    Raises:
-        ValueError: If any threshold is non-positive or if inputs are invalid.
+    If any threshold is missing or <= 0, it is replaced with its default
+    (to avoid divide-by-zero and invalid normalization).
     """
-    if FT <= 0 or CTw <= 0 or MTw <= 0:
-        raise ValueError("All thresholds (FT, CTw, MTw) must be > 0")
-
+    # Validate primary inputs
     if not (0.0 <= Fi <= 1.0):
         raise ValueError(f"Fi must be normalized to [0, 1]; got {Fi}")
 
     if Ciw < 0 or Miw < 0:
         raise ValueError("Ciw and Miw must be >= 0")
+
+    # Apply safe defaults for thresholds
+    FT = FT if FT and FT > 0 else 0.5
+    CTw = CTw if CTw and CTw > 0 else 1.0
+    MTw = MTw if MTw and MTw > 0 else 1.0
 
     return ((Fi / FT) + (Ciw / CTw) + (Miw / MTw)) / 3.0
 
@@ -51,7 +58,7 @@ def dataset_index_timeseries(
     citations: list[dict[str, Any]] | None = None,
     mentions: list[dict[str, Any]] | None = None,
     pubdate: str | None = None,
-    FT: float = 1.0,
+    FT: float = 0.5,
     CTw: float = 1.0,
     MTw: float = 1.0,
     citation_date_key: str = "citation_date",

@@ -1,9 +1,10 @@
 import os
-from datetime import datetime
 
 import duckdb
 
-from sindex.core.ids import _norm_doi, _norm_doi_url, is_working_doi
+from sindex.core.dates import _norm_date_iso, _to_datetime_utc
+from sindex.core.http import _is_reachable, is_url
+from sindex.core.ids import _norm_dataset_id, _norm_doi, _norm_doi_url, is_working_doi
 from sindex.metrics.citations import merge_citations_dicts
 from sindex.metrics.datasetindex import dataset_index_timeseries
 from sindex.metrics.mentions import merge_mentions_dicts
@@ -34,72 +35,84 @@ def default_norm_db_path():
 
 
 def dataset_index_series_from_doi(doi):
-    # Check valid DOI and normalize
+    # Validate DOI and normalize
     norm_doi = _norm_doi(doi)
     if not norm_doi:
-        raise ValueError(f"Invalid DOI format:{doi}")
-    norm_doi_url = _norm_doi_url(norm_doi)
-    if not is_working_doi(norm_doi_url):
-        raise ValueError(f"'{norm_doi_url}' is not a working DOI.")
+        raise ValueError(f"Invalid DOI format: {doi}")
 
-    # Ids
+    norm_doi_url = _norm_doi_url(norm_doi)
+    if not is_working_doi(norm_doi_url, allow_blocked=True):
+        raise ValueError(f"'{norm_doi_url}' does not appear to resolve.")
+
     dataset_report = {}
-    dataset_report["doi"] = doi
+    dataset_report["input_doi"] = doi
     dataset_report["norm_doi"] = norm_doi
     dataset_report["norm_doi_url"] = norm_doi_url
 
     # Get metadata from DataCite and create slim version
     rec = get_datacite_doi_record(norm_doi)
-    slim = slim_datacite_record(rec)
-    pubdate = slim["publication_date"]
-    pubyear = datetime.fromisoformat(pubdate).year
-    citations_block = slim["citations"]
+
+    if not rec:
+        # Happens if DOI is valid but not found in DataCite (e.g. DOI of a manuscript)
+        slim = None
+        pubdate = None
+        pubyear = None
+        citations_block = None
+    else:
+        slim = slim_datacite_record(rec)
+        pubdate = slim.get("publication_date")
+        pub_dt = _to_datetime_utc(pubdate)
+        pubyear = pub_dt.year if pub_dt else None
+        citations_block = slim.get("citations")
+
     dataset_report["metadata"] = slim
 
-    # Get field (OpenAlex topic)
+    # Get domain (OpenAlex topic)
     topic_result = get_primary_topic_for_doi(norm_doi)
-    if topic_result:
-        if topic_result["topic_score"] > 0.5:
-            dataset_report["topic"] = topic_result
-            topic_id = topic_result["topic_id"]
-        else:
-            dataset_report["topic"] = None
-            topic_id = None
-    else:
-        dataset_report["topic"] = None
-        topic_id = None
+
+    topic_id = None
+    dataset_report["topic"] = None
+
+    if topic_result and topic_result.get("topic_score", 0.0) > 0.5:
+        dataset_report["topic"] = topic_result
+        topic_id = topic_result.get("topic_id")
 
     # Get F-UJI FAIR score
     fair_report = fair_evaluation_report(norm_doi_url)
     dataset_report["fair"] = fair_report
-    fair_score = fair_report["fair_score"]
+
+    fair_score = None
+    if fair_report and "fair_score" in fair_report:
+        try:
+            fair_score = float(fair_report["fair_score"])
+        except Exception:
+            fair_score = None
 
     # Citations
     citations_list = []
     citations_mdc = find_citations_mdc_duckdb(
-        norm_doi, dataset_pub_date=pubdate, db_path=default_mdc_db_path()
+        doi, dataset_pub_date=pubdate, db_path=default_mdc_db_path()
     )
     if citations_mdc:
         citations_list.append(citations_mdc)
 
-    citations_oa = find_citations_oa(norm_doi_url, dataset_pub_date=pubdate)
+    citations_oa = find_citations_oa(doi, dataset_pub_date=pubdate)
     if citations_oa:
         citations_list.append(citations_oa)
-    citations_dc = find_citations_dc_from_citation_block(
-        norm_doi_url, citations_block, pubdate
-    )
-    if citations_dc:
-        citations_list.append(citations_dc)
 
-    citations = merge_citations_dicts(citations_list)
-    if citations:
-        dataset_report["citations"] = citations
-    else:
-        dataset_report["citations"] = None
+    if citations_block:
+        citations_dc = find_citations_dc_from_citation_block(
+            doi, citations_block, dataset_pub_date=pubdate
+        )
+        if citations_dc:
+            citations_list.append(citations_dc)
+
+    citations = merge_citations_dicts(citations_list) if citations_list else None
+    dataset_report["citations"] = citations
 
     # Mentions
     mentions_list = []
-    mentions_github = find_github_mentions_for_dataset_id(norm_doi, pubdate)
+    mentions_github = find_github_mentions_for_dataset_id(doi, dataset_pub_date=pubdate)
     if mentions_github:
         mentions_list.append(mentions_github)
 
@@ -110,29 +123,34 @@ def dataset_index_series_from_doi(doi):
         dataset_report["mentions"] = None
 
     # Normalization factors
-    con = duckdb.connect(default_norm_db_path())
-    norm = get_topic_year_norm_factors(
-        con,
-        topic_id=topic_id,
-        year=pubyear,
-        table="topic_norm_factors_mock",
-    )
+    try:
+        with duckdb.connect(default_norm_db_path()) as con:
+            norm = get_topic_year_norm_factors(
+                con,
+                topic_id=topic_id,
+                year=pubyear,
+                table="topic_norm_factors_mock",
+            )
+    except KeyError:
+        norm = None
 
-    if norm:
-        dataset_report["normalization_factors"] = norm
-    else:
-        dataset_report["normalization_factors"] = None
+    dataset_report["normalization_factors"] = norm
 
-    # Dataset Index
-    Fi = fair_score / 100.0
+    # Dataset Index series
+    Fi = (float(fair_score) / 100.0) if fair_score is not None else 0.0
+
+    FT = norm["FT"] if norm else 0.5
+    CTw = norm["CTw"] if norm else 1.0
+    MTw = norm["MTw"] if norm else 1.0
+
     dataset_index_series = dataset_index_timeseries(
         Fi=Fi,
         citations=citations,
         mentions=mentions,
         pubdate=pubdate,
-        FT=norm["FT"],
-        CTw=norm["CwT"],
-        MTw=norm["MwT"],
+        FT=FT,
+        CTw=CTw,
+        MTw=MTw,
     )
 
     if dataset_index_series:
@@ -140,4 +158,139 @@ def dataset_index_series_from_doi(doi):
     else:
         dataset_report["dataset_index_series"] = None
 
+    return dataset_report
+
+
+def dataset_index_series_from_url(
+    url: str,
+    *,
+    identifier: str | None = None,
+    pubdate: str | None = None,
+    topic_id: str | None = None,
+) -> dict:
+    """
+    Build a dataset_report starting from a URL (not a DOI).
+
+    This function intentionally skips DOI-dependent sources:
+      - get_datacite_doi_record
+      - get_primary_topic_for_doi
+      - find_citations_oa
+      - find_citations_dc_from_citation_block
+
+    Args:
+        url: Required dataset landing page URL.
+        identifier: Optional dataset identifier to use for MDC/GitHub searches
+                    (if omitted, we only use the URL as the identifier).
+        pubdate: Optional publication date in any reasonable format; normalized to ISO if provided.
+        topic_id: Optional OpenAlex topic id (e.g. "https://openalex.org/T12345" or "T12345").
+
+    Returns:
+        dataset_report dict with citations/mentions + normalization + dataset_index_series.
+    """
+    # Validate URL
+    if not isinstance(url, str) or not url.strip():
+        raise ValueError("url must be a non-empty string")
+    url = url.strip()
+
+    if not url.startswith(("http://", "https://")):
+        raise ValueError(
+            f"Invalid URL format: {url} (must start with http:// or https://)"
+        )
+    if not is_url(url):
+        raise ValueError(f"Invalid URL format: {url}")
+
+    if not _is_reachable(url):
+        raise ValueError(f"'{url}' does not appear to be reachable.")
+
+    norm_url = _norm_dataset_id(url)
+    norm_identifier = _norm_dataset_id(identifier)
+
+    dataset_report = {}
+    dataset_report["input_url"] = url
+    dataset_report["norm_url"] = norm_url
+    dataset_report["input_identifier"] = identifier
+    dataset_report["norm_identifier"] = norm_identifier
+
+    # Non metadata, resolve pubdate
+    if pubdate:
+        try:
+            pubdate = _norm_date_iso(pubdate)
+        except ValueError as e:
+            raise ValueError(f"Invalid pubdate '{pubdate}': {e}") from e
+    pub_dt = _to_datetime_utc(pubdate)
+    pubyear = pub_dt.year if pub_dt else None
+
+    dataset_report["metadata"] = None
+
+    # Domain (OpenALex topic)
+    dataset_report["topic"] = topic_id
+
+    # Get F-UJI FAIR score
+    fair_report = fair_evaluation_report(url)
+    dataset_report["fair"] = fair_report
+
+    fair_score = None
+    if fair_report and "fair_score" in fair_report:
+        try:
+            fair_score = float(fair_report["fair_score"])
+        except Exception:
+            fair_score = None
+
+    # Citations (MDC only)
+    citations_list: list[list[dict]] = []
+
+    citations_mdc = find_citations_mdc_duckdb(
+        url, dataset_pub_date=pubdate, db_path=default_mdc_db_path()
+    )
+    if citations_mdc:
+        citations_list.append(citations_mdc)
+
+    citations = merge_citations_dicts(citations_list) if citations_list else None
+    dataset_report["citations"] = citations
+
+    # Mentions
+    mentions_list: list[list[dict]] = []
+
+    mentions_github = find_github_mentions_for_dataset_id(
+        url,
+        dataset_pub_date=pubdate,
+    )
+    if mentions_github:
+        mentions_list.append(mentions_github)
+
+    mentions = merge_mentions_dicts(mentions_list) if mentions_list else None
+    dataset_report["mentions"] = mentions
+
+    # 7) Normalization factors
+    try:
+        with duckdb.connect(default_norm_db_path()) as con:
+            norm = get_topic_year_norm_factors(
+                con,
+                topic_id=topic_id,
+                year=pubyear,
+                table="topic_norm_factors_mock",
+            )
+    except KeyError:
+        norm = None
+
+    dataset_report["normalization_factors"] = norm
+
+    # Dataset Index series
+    Fi = (float(fair_score) / 100.0) if fair_score is not None else 0.0
+
+    FT = norm["FT"] if norm else 0.5
+    CTw = norm["CTw"] if norm else 1.0
+    MTw = norm["MTw"] if norm else 1.0
+
+    dataset_index_series = dataset_index_timeseries(
+        Fi=Fi,
+        citations=citations,
+        mentions=mentions,
+        pubdate=pubdate,
+        FT=FT,
+        CTw=CTw,
+        MTw=MTw,
+    )
+
+    dataset_report["dataset_index_series"] = dataset_index_series or None
     return dataset_report

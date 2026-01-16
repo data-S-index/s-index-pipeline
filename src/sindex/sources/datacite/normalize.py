@@ -207,6 +207,7 @@ def slim_datacite_record(metadata: dict) -> dict:
 def datacite_citations_block_to_records(
     target_doi: str,
     citations: Dict[str, list] | None,
+    *,
     dataset_pub_date: str | None = None,
 ) -> List[Dict[str, object]]:
     """
@@ -222,7 +223,7 @@ def datacite_citations_block_to_records(
 
         citation_link = _norm_doi_url(citation_doi)
         rec: Dict[str, object] = {
-            "doi": target_doi,
+            "dataset_id": target_doi,
             "source": ["datacite"],
             "citation_link": citation_link,
         }
@@ -232,9 +233,10 @@ def datacite_citations_block_to_records(
             rec["citation_date"] = citation_date
 
         rec["citation_weight"] = citation_weight(dataset_pub_date, citation_date)
+
         results.append(rec)
 
-    # Other identifiers → keep id only
+    # For other identifiers we cannot get a citation_date
     for obj in (citations or {}).get("other", []) or []:
         if not isinstance(obj, dict):
             continue
@@ -243,7 +245,7 @@ def datacite_citations_block_to_records(
             continue
         results.append(
             {
-                "doi": target_doi,
+                "dataset_id": target_doi,
                 "source": ["datacite"],
                 "citation_link": id_val,
                 "citation_weight": 1.0,
