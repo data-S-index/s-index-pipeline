@@ -118,6 +118,9 @@ def dataset_index_timeseries(
     else:
         eval_dates = sorted(eval_dates)
 
+    if not eval_dates:
+        eval_dates = [today_dt]
+
     # Compute cumulative sums and series
     out: list[dict[str, Any]] = []
     ciw = 0.0
