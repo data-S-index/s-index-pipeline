@@ -13,7 +13,7 @@ def best_publication_date_for_doi(
     openalex_session: requests.Session | None = None,
     datacite_session: requests.Session | None = None,
     crossref_session: requests.Session | None = None,
-) -> str:
+) -> str | None:
     """
     Return the best-available normalized publication date for a DOI.
 
@@ -22,11 +22,12 @@ def best_publication_date_for_doi(
       2) DataCite
       3) Crossref
 
-    Returns ISO-8601 string, else "".
+    Returns:
+      ISO-8601 string, or None if no date is found.
     """
     return (
         fetch_openalex_pubdate(doi_or_doi_url, session=openalex_session)
         or fetch_datacite_pubdate(doi_or_doi_url, session=datacite_session)
         or fetch_crossref_pubdate(doi_or_doi_url, session=crossref_session)
-        or ""
+        or None
     )

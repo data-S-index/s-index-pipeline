@@ -18,8 +18,8 @@ from sindex.sources.github.constants import (
 
 def find_github_mentions_for_dataset_id(
     dataset_id: str,
-    dataset_pub_date: str = "",
     *,
+    dataset_pub_date: str | None = None,
     max_pages: int = DEFAULT_MAX_PAGES,
     include_forks: bool = False,
     session: requests.Session | None = None,
@@ -91,11 +91,13 @@ def find_github_mentions_for_dataset_id(
         if not include_forks and meta.get("fork"):
             continue
 
-        created_raw = meta.get("created_at", "") or ""
-        try:
-            mention_date = _norm_date_iso(created_raw) if created_raw else ""
-        except ValueError:
-            mention_date = ""
+        created_raw = meta.get("created_at")
+        mention_date = None
+        if created_raw:
+            try:
+                mention_date = _norm_date_iso(created_raw)
+            except ValueError:
+                mention_date = None
 
         repos_with_mentions[full_name] = {
             "repo_link": f"https://github.com/{full_name}",
@@ -105,7 +107,7 @@ def find_github_mentions_for_dataset_id(
     results: list[dict] = []
     for full_name in sorted(repos_with_mentions.keys()):
         info = repos_with_mentions[full_name]
-        mention_dt = info.get("mention_date", "")
+        mention_dt = info.get("mention_date")
 
         entry = {
             "dataset_id": dataset_id,

@@ -1,5 +1,6 @@
 from typing import Any, Dict, List
 
+from sindex.core.dates import _norm_date_iso
 from sindex.core.ids import _norm_dataset_id
 from sindex.metrics.dedup import dedupe_citations_by_link
 from sindex.metrics.weights import citation_weight
@@ -73,28 +74,32 @@ def build_mdc_index(
 def find_citations_mdc_duckdb(
     target_id: str,
     *,
-    dataset_pub_date: str = "",
+    dataset_pub_date: str | None = None,
     db_path: str = DEFAULT_DB_PATH,
 ) -> List[Dict[str, Any]]:
     target_norm = _norm_dataset_id(target_id)
     if not target_norm:
         return []
 
-    con = make_duckdb_conn(db_path, read_only=True)
-
-    rows = con.execute(
-        """
-        SELECT citation_link, citation_date
-        FROM mdc_index
-        WHERE dataset_norm = ?
-        """,
-        [target_norm],
-    ).fetchall()
-    con.close()
-
     out: List[Dict[str, Any]] = []
-    for citation_link, citation_date in rows:
-        citation_date = citation_date or ""
+
+    with make_duckdb_conn(db_path, read_only=True) as con:
+        rows = con.execute(
+            """
+            SELECT citation_link, citation_date
+            FROM mdc_index
+            WHERE dataset_norm = ?
+            """,
+            [target_norm],
+        ).fetchall()
+
+    for citation_link, citation_date_raw in rows:
+        citation_date = None
+        if citation_date_raw:
+            try:
+                citation_date = _norm_date_iso(str(citation_date_raw))
+            except ValueError:
+                citation_date = None
         rec: Dict[str, Any] = {
             "dataset_id": target_id,
             "source": ["mdc"],
@@ -103,6 +108,7 @@ def find_citations_mdc_duckdb(
         }
         if citation_date:
             rec["citation_date"] = citation_date
+
         out.append(rec)
 
     return dedupe_citations_by_link(out)

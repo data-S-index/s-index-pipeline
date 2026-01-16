@@ -201,14 +201,22 @@ def _normalize_orcid(orcid: str) -> str:
     return f"https://orcid.org/{m.group(1)}"
 
 
-def is_working_doi(s: str, session: requests.Session | None = None) -> bool:
+def is_working_doi(
+    s: str,
+    session: requests.Session | None = None,
+    *,
+    timeout: float = 10.0,
+    allow_blocked: bool = True,
+) -> bool:
     """
-    Checks if the string contains a valid DOI and if that DOI resolves.
+    Return True if the DOI URL is reachable enough to be considered resolving.
+
+    allow_blocked=True treats 401/403 as "working but blocked" (common with bot protections).
     """
     doi_url = _norm_doi_url(s)
     if not doi_url:
         return False
-    return _is_reachable(doi_url, session)
+    return _is_reachable(doi_url, session, timeout=timeout, allow_blocked=allow_blocked)
 
 
 def is_working_url(s: str, session: requests.Session | None = None) -> bool:

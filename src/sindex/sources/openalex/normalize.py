@@ -14,7 +14,7 @@ def openalex_citing_works_to_citations(
     citing_records: List[dict],
     *,
     dataset_id: str,
-    dataset_pub_date: str,
+    dataset_pub_date: str | None,
 ) -> List[Dict[str, object]]:
     out: List[Dict[str, object]] = []
 
@@ -24,13 +24,13 @@ def openalex_citing_works_to_citations(
         if not citation_link:
             continue
 
-        citation_date_raw = c.get("publication_date") or ""
-        try:
-            citation_date = (
-                _norm_date_iso(citation_date_raw) if citation_date_raw else ""
-            )
-        except ValueError:
-            citation_date = ""
+        citation_date_raw = c.get("publication_date")
+        citation_date = None
+        if citation_date_raw:
+            try:
+                citation_date = _norm_date_iso(citation_date_raw)
+            except ValueError:
+                citation_date = None
 
         rec: Dict[str, object] = {
             "dataset_id": dataset_id,

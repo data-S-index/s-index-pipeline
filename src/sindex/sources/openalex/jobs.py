@@ -18,7 +18,7 @@ from .normalize import openalex_citing_works_to_citations
 def find_citations_oa(
     doi: str,
     *,
-    dataset_pub_date: str = None,
+    dataset_pub_date: str | None = None,
     email: Optional[str] = None,
     session: Optional[requests.Session] = None,
     api_key: Optional[str] = None,
