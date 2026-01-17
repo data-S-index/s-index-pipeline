@@ -8,6 +8,8 @@ dependencies:
   - python-dateutil>=2.9
   - ijson=3.4.0
   - tzdata
+  - duckdb
   - pip
   - pip:
       - types-requests
+      - pdfminer.six
