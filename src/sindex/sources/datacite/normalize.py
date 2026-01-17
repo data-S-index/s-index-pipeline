@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Any, Dict, Iterator, List
 
 from sindex.core.dates import _norm_date_iso
 from sindex.core.ids import _norm_doi, _norm_doi_url
@@ -253,3 +253,85 @@ def datacite_citations_block_to_records(
         )
 
     return dedupe_citations_by_link(results)
+
+
+def get_dataset_doi_from_identifiers(row: Dict[str, Any]) -> str | None:
+    """
+    Extract the dataset DOI (normalized) from a DataCite-style row:
+      row["identifiers"] = [{"identifier": "...", "identifier_type": "doi"}, ...]
+    """
+    ids = row.get("identifiers") or []
+    if not isinstance(ids, list):
+        return None
+
+    for obj in ids:
+        if not isinstance(obj, dict):
+            continue
+        if (obj.get("identifier_type") or "").lower() == "doi":
+            return _norm_doi(obj.get("identifier"))
+
+    return None
+
+
+def datacite_slim_metadata_to_citation_records(
+    row: Dict[str, Any],
+    *,
+    dataset_id_as_url: bool = False,
+) -> Iterator[Dict[str, object]]:
+    """
+    Yield normalized citation-edge records for ONE DataCite row.
+
+    Output format (one dict per edge):
+      {
+        "dataset_id": "<dataset_doi or doi_url>",
+        "source": ["datacite"],
+        "citation_link": "<doi_url or other id>",
+        "citation_weight": 1.0
+      }
+
+    Dedupe is per-row (dataset record).
+    """
+    dataset_doi = get_dataset_doi_from_identifiers(row)
+    if not dataset_doi:
+        return
+
+    dataset_id: str = _norm_doi_url(dataset_doi) if dataset_id_as_url else dataset_doi
+
+    citations = row.get("citations") or {}
+    if not isinstance(citations, dict):
+        citations = {}
+
+    seen: set[str] = set()
+
+    # DOI citations -> normalized DOI URL
+    for raw in (citations.get("dois") or []) or []:
+        c_doi = _norm_doi(raw)
+        if not c_doi:
+            continue
+        link = _norm_doi_url(c_doi)
+        if link in seen:
+            continue
+        seen.add(link)
+
+        yield {
+            "dataset_id": dataset_id,
+            "source": ["datacite"],
+            "citation_link": link,
+            "citation_weight": 1.0,
+        }
+
+    # Other identifiers -> keep as-is (string id)
+    for obj in (citations.get("other") or []) or []:
+        if not isinstance(obj, dict):
+            continue
+        other_id = (obj.get("id") or "").strip()
+        if not other_id or other_id in seen:
+            continue
+        seen.add(other_id)
+
+        yield {
+            "dataset_id": dataset_id,
+            "source": ["datacite"],
+            "citation_link": other_id,
+            "citation_weight": 1.0,
+        }

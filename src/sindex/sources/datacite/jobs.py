@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import glob
 import gzip
 import json
 import os
@@ -13,13 +14,16 @@ import requests
 from sindex.core.dates import _parse_date_strict
 from sindex.core.http import make_session
 from sindex.core.io import _iter_json_lines
-from sindex.sources.datacite.discovery import (
+
+from .discovery import (
     get_datacite_doi_record,
     stream_datacite_records,
 )
-from sindex.sources.datacite.normalize import slim_datacite_record
-
-from .normalize import datacite_citations_block_to_records
+from .normalize import (
+    datacite_citations_block_to_records,
+    datacite_slim_metadata_to_citation_records,
+    slim_datacite_record,
+)
 
 
 def harvest_datacite_doi_list_to_ndjson(
@@ -360,3 +364,83 @@ def find_citations_dc_from_citation_block(
         citations=citations,
         dataset_pub_date=dataset_pub_date,
     )
+
+
+def find_citations_dc_slim_metadata(
+    slim_folder: str,
+    out_ndjson: str,
+    *,
+    pattern: str = "*.ndjson*",
+    recursive: bool = False,
+    dataset_id_as_url: bool = False,
+    print_errors: bool = False,
+) -> Dict[str, int]:
+    """
+    Stream DataCite NDJSON files from `slim_folder` and write citation  to `out_ndjson`.
+
+    - Uses sindex.core.io._iter_json_lines() (safe streaming for .ndjson/.ndjson.gz).
+    - Writes one NDJSON line per citation.
+    - No citation_date here.
+
+    Args:
+        slim_folder: Folder containing NDJSON/NDJSON.GZ files.
+        out_ndjson: Output NDJSON file path (one edge per line).
+        pattern: Glob pattern (default "*.ndjson*").
+        recursive: If True, uses recursive glob (pattern can include **).
+        dataset_id_as_url: If True, writes dataset_id as https://doi.org/<doi>.
+        print_errors: If True, prints JSON decode errors from _iter_json_lines.
+
+    Returns:
+        Stats dict.
+    """
+    os.makedirs(os.path.dirname(out_ndjson) or ".", exist_ok=True)
+
+    glob_path = os.path.join(slim_folder, pattern)
+    files = sorted(glob.glob(glob_path, recursive=recursive))
+    if not files:
+        raise FileNotFoundError(
+            f"No files found in {slim_folder} matching pattern={pattern!r} (recursive={recursive})"
+        )
+
+    total_files = len(files)
+    n_rows = 0
+    n_edges = 0
+    n_bad_json = 0
+
+    with open(out_ndjson, "wt", encoding="utf-8") as out:
+        for i, fp in enumerate(files, start=1):
+            for rec, err in _iter_json_lines(Path(fp)):
+                if err:
+                    n_bad_json += 1
+                    if print_errors:
+                        print("\n" + err)
+                    continue
+
+                if not isinstance(rec, dict):
+                    continue
+
+                n_rows += 1
+
+                for edge in datacite_slim_metadata_to_citation_records(
+                    rec, dataset_id_as_url=dataset_id_as_url
+                ):
+                    out.write(json.dumps(edge, ensure_ascii=False) + "\n")
+                    n_edges += 1
+
+            out.flush()
+
+            # print status at end of each file
+            print(
+                f"\r[Progress] files {i}/{total_files} completed | rows {n_rows:,} | citations {n_edges:,} | bad_json {n_bad_json:,}",
+                end="",
+                flush=True,
+            )
+
+    print()
+
+    return {
+        "files": total_files,
+        "rows_read": n_rows,
+        "edges_written": n_edges,
+        "bad_json_lines": n_bad_json,
+    }
