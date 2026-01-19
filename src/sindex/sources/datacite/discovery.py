@@ -115,7 +115,7 @@ def fetch_datacite_pubdate(doi: str, session: requests.Session | None = None) ->
     attrs = datacite_record.get("attributes") or {}
 
     # Try "created", "published", or "issued" dates in this order of preference
-    for key in ("created", "published", "issued"):
+    for key in ("published", "created", "registered"):
         val = attrs.get(key)
         if not val:
             continue
