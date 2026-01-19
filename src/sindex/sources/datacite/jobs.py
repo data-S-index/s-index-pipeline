@@ -95,6 +95,7 @@ def harvest_datacite_datasets_for_date_range_to_ndjson(
     *,
     window_days: int = 7,
     page_size: int = 1000,
+    detail: bool = True,
     polite_sleep_seconds: float | None = 1.0,
     skip_empty_files: bool = False,
     save_folder: str | None = None,
@@ -165,12 +166,12 @@ def harvest_datacite_datasets_for_date_range_to_ndjson(
         start_iso, end_iso = window_start.isoformat(), end.isoformat()
         out_path = os.path.join(save_folder, f"datacite-{start_iso}-{end_iso}.ndjson")
 
-        # Attempt the window; on ReadTimeout shrink page_size and retry the same window
+        # Attempt the window, on ReadTimeout shrink page_size and retry the same window
         ps = page_size
         while True:
             print(
                 f"Fetching records {start_iso} → {end_iso} "
-                f"(window_days={window_days}, page_size={ps})"
+                f"(window_days={window_days}, page_size={ps}, detail={detail})"
             )
             range_count = 0
             wrote_any = False
@@ -181,6 +182,7 @@ def harvest_datacite_datasets_for_date_range_to_ndjson(
                         start_iso,
                         end_iso,
                         page_size=ps,
+                        detail=detail,
                         session=s,
                         timeout=timeout,
                     ):
