@@ -43,6 +43,7 @@ def stream_datacite_records(
     start_date: str,
     end_date: str,
     page_size: int = 1000,
+    detail: bool = True,
     session: requests.Session | None = None,  # pass a shared session
     timeout: Tuple[int, int] = (10, 240),  # (connect, read) seconds
 ) -> Iterator[Dict]:
@@ -79,6 +80,7 @@ def stream_datacite_records(
         "query": f"types.resourceTypeGeneral:Dataset AND created:[{start_date} TO {end_date}]",
         "page[size]": page_size,
         "page[cursor]": 1,
+        "detail": str(detail).lower(),
     }
 
     while True:
@@ -115,7 +117,7 @@ def fetch_datacite_pubdate(doi: str, session: requests.Session | None = None) ->
     attrs = datacite_record.get("attributes") or {}
 
     # Try "created", "published", or "issued" dates in this order of preference
-    for key in ("created", "published", "issued"):
+    for key in ("published", "created", "registered"):
         val = attrs.get(key)
         if not val:
             continue
