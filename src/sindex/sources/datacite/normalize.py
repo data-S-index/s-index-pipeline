@@ -8,6 +8,8 @@ from sindex.enrich.pubdate.jobs import best_publication_date_for_doi
 from sindex.metrics.dedup import dedupe_citations_by_link
 from sindex.metrics.weights import citation_weight
 
+from .utils import get_best_publication_date_datacite_record
+
 
 def slim_datacite_record(metadata: dict) -> dict:
     """
@@ -96,19 +98,17 @@ def slim_datacite_record(metadata: dict) -> dict:
         out["publisher"] = publisher
 
     # Publication date
-    created = attr.get("created", "")  # Date record was created on DataCite
+    publication_date = get_best_publication_date_datacite_record(attr)
+    if publication_date:
+        out["publication_date"] = publication_date
+
+    # Created date
+    created = attr.get(
+        "created", ""
+    )  # This is the date DOI record was created on DataCite
     if created:
         try:
             out["created_date"] = _norm_date_iso(created)
-        except ValueError:
-            pass  # skip if issue during normalization
-
-    published = attr.get(
-        "published", ""
-    )  # DataCite published date, could be different than created_date
-    if published:
-        try:
-            out["publication_date"] = _norm_date_iso(published)
         except ValueError:
             pass  # skip if issue during normalization
 
