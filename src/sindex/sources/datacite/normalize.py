@@ -96,12 +96,21 @@ def slim_datacite_record(metadata: dict) -> dict:
         out["publisher"] = publisher
 
     # Publication date
-    created = attr.get("created", "")
+    created = attr.get("created", "")  # Date record was created on DataCite
     if created:
         try:
-            out["publication_date"] = _norm_date_iso(created)
+            out["created_date"] = _norm_date_iso(created)
         except ValueError:
-            pass  # skip if not valid
+            pass  # skip if issue during normalization
+
+    published = attr.get(
+        "published", ""
+    )  # DataCite published date, could be different than created_date
+    if published:
+        try:
+            out["publication_date"] = _norm_date_iso(published)
+        except ValueError:
+            pass  # skip if issue during normalization
 
     # Creators
     creators_slim = []

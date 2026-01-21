@@ -4,10 +4,12 @@ import gzip
 import json
 import os
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List
 
+import orjson
 import requests
 
 from sindex.core.dates import _parse_date_strict
@@ -344,6 +346,122 @@ def batch_slim_datacite_record_to_ndjson(
     print(
         f"Done. files={num_files} kept={total_out:,} bad={total_bad:,} "
         f"time={dt:.1f}s rate≈{rate:,}/s → {summary['output_dir']}"
+    )
+    return summary
+
+
+def _worker_process_file(args):
+    """
+    Worker function: Processes a single NDJSON file.
+    For multiprocessing.
+    """
+    in_path, out_path, overwrite = args
+
+    if out_path.exists() and not overwrite:
+        return 0, 0, 0
+
+    r = k = b = 0
+    is_gz = in_path.suffix == ".gz"
+    open_func = gzip.open if is_gz else open
+    mode = "rb"
+    out_mode = "wb"
+
+    try:
+        with open_func(in_path, mode) as f_in, open_func(out_path, out_mode) as f_out:
+            for line in f_in:
+                if not line.strip():
+                    continue
+                try:
+                    rec = orjson.loads(line)
+                    r += 1
+
+                    slim = slim_datacite_record(rec)
+                    f_out.write(orjson.dumps(slim) + b"\n")
+                    k += 1
+                except Exception:
+                    b += 1
+    except Exception as e:
+        print(f"\n[Error] {in_path.name}: {e}")
+
+    return r, k, b
+
+
+def batch_slim_datacite_record_to_ndjson_fast(
+    src_folder: str,
+    dst_folder: str,
+    overwrite: bool = False,
+    accept_gz: bool = True,
+    one_line_progress: bool = True,
+    workers: int = os.cpu_count(),
+) -> dict:
+    src, dst = Path(src_folder), Path(dst_folder)
+    dst.mkdir(parents=True, exist_ok=True)
+
+    # Gather files
+    patterns = ["*.ndjson"]
+    if accept_gz:
+        patterns.append("*.ndjson.gz")
+
+    files = []
+    for pat in patterns:
+        files.extend(src.glob(pat))
+    files.sort()
+
+    num_files = len(files)
+    if num_files == 0:
+        print("No files found.")
+        return {}
+
+    # Prepare task arguments
+    tasks = []
+    for in_path in files:
+        # Naming convention: original.ndjson -> original-slim.ndjson
+        suffix = ".ndjson.gz" if in_path.name.endswith(".ndjson.gz") else ".ndjson"
+        out_name = in_path.name.replace(suffix, f"-slim{suffix}")
+        tasks.append((in_path, dst / out_name, overwrite))
+
+    total_in = total_out = total_bad = 0
+    t0 = time.time()
+
+    # Process in parallel
+    print(f"Processing {num_files} files using {workers} cores...")
+
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        future_to_index = {
+            executor.submit(_worker_process_file, task): i
+            for i, task in enumerate(tasks)
+        }
+
+        # Progress reporting
+        for idx, future in enumerate(as_completed(future_to_index), 1):
+            r, k, b = future.result()
+            total_in += r
+            total_out += k
+            total_bad += b
+
+            if one_line_progress:
+                print(f"\r[{idx}/{num_files}] files completed", end="", flush=True)
+
+    if one_line_progress:
+        print()  # Line break after progress bar
+
+    # Summary statistics
+    dt = time.time() - t0
+    rate = int(total_out / dt) if dt > 0 else 0
+
+    summary = {
+        "files_seen": num_files,
+        "records_read": total_in,
+        "records_kept": total_out,
+        "records_bad_json": total_bad,
+        "output_dir": str(dst.resolve()),
+        "elapsed_sec": round(dt, 2),
+        "rate_rec_per_sec": rate,
+    }
+
+    print(
+        f"Done. files={num_files} kept={total_out:,} bad={total_bad:,} "
+        f"time={dt:.1f}s rate≈{rate:,}/rec-per-sec"
     )
     return summary
 

@@ -52,6 +52,8 @@ def _norm_date_iso(s: str) -> str:
     Raises:
         ValueError: If the input date cannot be parsed or no 4-digit year is found.
     """
+    default_dt = datetime(1, 1, 1, 0, 0, 0)
+
     if not isinstance(s, str):
         raise ValueError("Date must be a string.")
     s = s.strip()
@@ -59,7 +61,7 @@ def _norm_date_iso(s: str) -> str:
         raise ValueError("Date input is empty.")
 
     try:
-        dt = parser.parse(s)
+        dt = parser.parse(s, default=default_dt)
     except Exception as e:
         raise ValueError(f"Invalid date format: {s}") from e
 
@@ -168,3 +170,52 @@ def _dt_utc_or_today(s: Optional[str], *, today_dt: datetime) -> datetime:
     """
     dt = _to_datetime_utc(s)
     return dt if dt is not None else today_dt
+
+
+def get_realistic_date(date_str: str | None, start_year: int = 1950) -> str | None:
+    """
+    Checks if an ISO date string is between Jan 1st of start_year and today.
+    Ignores time components during comparison.
+    Returns the original string if realistic, otherwise None.
+    """
+    if not date_str:
+        return None
+
+    try:
+        # fromisoformat handles '2024-10-10T21:27:19+00:00'
+        dt_obj = datetime.fromisoformat(
+            date_str
+        ).date()  # .date() strips the time and timezone for pure date comparison
+
+        start_bound = date(start_year, 1, 1)
+        end_bound = date.today()
+
+        if start_bound <= dt_obj <= end_bound:
+            return date_str
+
+    except (ValueError, TypeError):
+        # Returns None if the string is malformed or not a date
+        pass
+
+    return None
+
+
+def get_best_dataset_date(
+    publication_date: str | None, created_date: str | None, start_year: int = 1950
+) -> str | None:
+    """
+    Returns publication_date if realistic, otherwise created_date if realistic,
+    otherwise None.
+    """
+    # Try publication date
+    realistic_pub = get_realistic_date(publication_date, start_year)
+    if realistic_pub:
+        return realistic_pub
+
+    # Fallback to  created date
+    realistic_created = get_realistic_date(created_date, start_year)
+    if realistic_created:
+        return realistic_created
+
+    # No realistic dates found
+    return None
