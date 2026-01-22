@@ -12,7 +12,7 @@ def make_duckdb_conn(
     con = duckdb.connect(db_path, read_only=read_only)
     con.execute(f"PRAGMA threads={DEFAULT_THREADS}")
     if ENABLE_PROGRESS and not read_only:
-        con.execute("PRAGMA enable_progress_bar=false")
+        con.execute("PRAGMA enable_progress_bar=true")
     return con
 
 

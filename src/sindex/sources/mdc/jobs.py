@@ -32,7 +32,7 @@ def build_mdc_index(
 
     con.execute("DROP TABLE IF EXISTS mdc_index")
 
-    # 1) Ingest + normalize
+    # Ingest + normalize
     con.execute(f"""
         CREATE TABLE mdc_index AS
         SELECT
@@ -44,13 +44,13 @@ def build_mdc_index(
           AND publication IS NOT NULL;
     """)
 
-    # 2) Clean failures
+    # Clean failures
     con.execute("""
         DELETE FROM mdc_index
         WHERE dataset_norm IS NULL OR citation_link IS NULL OR citation_link = '';
     """)
 
-    # 3) Dedupe multiple entries of similar (dataset_norm, citation_link)
+    # Dedupe multiple entries of similar (dataset_norm, citation_link)
     con.execute("DROP TABLE IF EXISTS mdc_index_dedup")
     con.execute("""
         CREATE TABLE mdc_index_dedup AS
@@ -64,7 +64,7 @@ def build_mdc_index(
     con.execute("DROP TABLE mdc_index")
     con.execute("ALTER TABLE mdc_index_dedup RENAME TO mdc_index")
 
-    # 4) Index for fast point lookups
+    # Index for fast point lookups
     con.execute(
         "CREATE INDEX IF NOT EXISTS idx_mdc_dataset_norm ON mdc_index(dataset_norm)"
     )
@@ -130,7 +130,7 @@ def batch_find_citations_mdc_ducdb_optimized(
 ):
     start_time = time.time()
 
-    # Filter for non-empty files
+    # Filter out non-empty files
     all_files = [
         os.path.join(slim_folder, f)
         for f in os.listdir(slim_folder)
@@ -142,32 +142,44 @@ def batch_find_citations_mdc_ducdb_optimized(
         print("No valid ndjson files found.")
         return
 
-    # Create table with DOIs and dates
+    # Connect to DuckDB and process
     with make_duckdb_conn(db_path, read_only=True) as con:
-        # We use ignore_errors=True in case 1 line out of 50M is malformed
-        # and format='auto' to let DuckDB handle the compression/nesting
+        # Register your Python normalization function so SQL can use it
+        con.create_function("_norm_dataset_id", _norm_dataset_id)
+
+        # Create temp table with priority ID logic and explicit schema
         setup_query = """
         CREATE OR REPLACE TEMP TABLE input_data AS
         SELECT 
-            (SELECT x.identifier FROM unnest(identifiers) AS t(x) 
-             WHERE x.identifier_type = 'doi' LIMIT 1) AS doi,
-            published_date,
+            COALESCE(
+                (SELECT x.identifier FROM unnest(identifiers) AS t(x) 
+                 WHERE x.identifier_type = 'doi' LIMIT 1),
+                identifiers[1].identifier
+            ) AS best_id,
+            publication_date,
             created_date
-        FROM read_json_auto(?, ignore_errors=True)
-        WHERE doi IS NOT NULL;
+        FROM read_json_auto(?, 
+            ignore_errors=True, 
+            columns={
+                'identifiers': 'STRUCT(identifier_type VARCHAR, identifier VARCHAR)[]',
+                'publication_date': 'VARCHAR',
+                'created_date': 'VARCHAR'
+            }
+        )
+        WHERE best_id IS NOT NULL;
         """
         con.execute(setup_query, [valid_files])
 
-        # Join with mdc citations table to find overlaping dois
+        # Join with mdc citations table using the normalized ID
         results = con.execute("""
             SELECT 
-                i.doi,
-                i.published_date,
+                i.best_id,
+                i.publication_date,
                 i.created_date,
                 m.citation_link,
                 m.citation_date
             FROM input_data i
-            JOIN mdc_index m ON (_norm_dataset_id(i.doi) = m.dataset_norm)
+            JOIN mdc_index m ON (_norm_dataset_id(i.best_id) = m.dataset_norm)
         """)
 
         # Process matched citations and stream to ndjson file
@@ -179,22 +191,19 @@ def batch_find_citations_mdc_ducdb_optimized(
                     break
 
                 for row in chunk:
-                    doi, pub_d, cre_d, c_link, c_date_raw = row
-
-                    # Apply your custom logic
+                    best_id, pub_d, cre_d, c_link, c_date_raw = row
                     dataset_date = get_best_dataset_date(pub_d, cre_d)
 
                     citation_date = None
                     if c_date_raw:
                         try:
-                            # Standardize and check if realistic
                             norm_iso_date = _norm_date_iso(str(c_date_raw))
                             citation_date = get_realistic_date(norm_iso_date)
                         except (ValueError, TypeError):
                             citation_date = None
 
                     rec = {
-                        "dataset_id": doi,
+                        "dataset_id": best_id,
                         "source": ["mdc"],
                         "citation_link": c_link,
                         "citation_weight": citation_weight(dataset_date, citation_date),
@@ -213,3 +222,4 @@ def batch_find_citations_mdc_ducdb_optimized(
                 )
 
     print(f"\nProcessing complete. Output saved to {out_ndjson}")
+    print(f"Total citations matched: {count:,}")

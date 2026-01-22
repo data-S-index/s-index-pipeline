@@ -9,7 +9,9 @@ from concurrent.futures import ProcessPoolExecutor
 import duckdb
 import pandas as pd
 
+from sindex.core.dates import _norm_date_iso, get_best_dataset_date, get_realistic_date
 from sindex.core.ids import _norm_doi
+from sindex.metrics.weights import citation_weight
 
 
 def shorten_id(url):
@@ -126,6 +128,339 @@ def run_openalex_sweep(source_dir, meta_out, cite_out, max_workers=None):
     return {"processed": processed, "skipped": skipped, "errors": errors}
 
 
+def process_openalex_topics_for_datasets(
+    db_path,
+    dataset_db_path,
+    meta_folder,
+    mem_limit="32GB",
+    temp_dir=None,
+    file_limit=None,
+    reset_tables=False,
+):
+    """
+    Scans OpenAlex metadata parquet files to find target DOIs, identifies topics,
+    and includes dates and a computed best_date using a Python UDF.
+    """
+    start_time = time.time()
+    con = duckdb.connect(db_path)
+
+    # Register the Python function as a DuckDB UDF
+    try:
+        con.execute("DROP FUNCTION get_best_date")
+    except duckdb.CatalogException:
+        pass
+
+    con.create_function("get_best_date", get_best_dataset_date)
+
+    # Attach the external database
+    con.execute(f"ATTACH '{dataset_db_path}' AS dataset_db (READ_ONLY)")
+
+    # Configuration
+    con.execute(f"SET memory_limit = '{mem_limit}';")
+    con.execute("SET enable_progress_bar = false;")
+    con.execute("SET preserve_insertion_order = false;")
+    if temp_dir:
+        os.makedirs(temp_dir, exist_ok=True)
+        clean_temp_path = temp_dir.replace("\\", "/")
+        con.execute(f"SET temp_directory = '{clean_temp_path}';")
+
+    # Optional Table Cleanup
+    if reset_tables:
+        print("Resetting tables: dropping existing progress and topic data...")
+        con.execute("DROP TABLE IF EXISTS processed_meta_files")
+        con.execute("DROP TABLE IF EXISTS my_datasets_topics")
+        con.execute("DROP TABLE IF EXISTS my_datasets_topics_raw")
+
+    # Initialize Tables
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS processed_meta_files (filename VARCHAR PRIMARY KEY)"
+    )
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS my_datasets_topics_raw (
+            oa_id VARCHAR, 
+            doi VARCHAR, 
+            publication_date VARCHAR, 
+            created_date VARCHAR,
+            topic_id VARCHAR, 
+            topic_name VARCHAR, 
+            topic_score DOUBLE
+        )
+    """)
+
+    # File Discovery
+    search_pattern = os.path.join(meta_folder, "*.parquet").replace("\\", "/")
+    all_files = sorted(glob.glob(search_pattern))
+    if file_limit:
+        all_files = all_files[:file_limit]
+
+    done_files = {
+        row[0]
+        for row in con.execute("SELECT filename FROM processed_meta_files").fetchall()
+    }
+    files_to_process = [f for f in all_files if f not in done_files]
+
+    if not files_to_process:
+        print("All metadata files have already been processed.")
+    else:
+        print(f"Starting scan of {len(files_to_process)} metadata files...")
+        for i, file_path in enumerate(files_to_process, 1):
+            clean_path = file_path.replace("\\", "/")
+            con.execute("BEGIN TRANSACTION")
+            try:
+                con.execute(f"""
+                    INSERT INTO my_datasets_topics_raw
+                    SELECT 
+                        m.oa_id, 
+                        m.doi, 
+                        t.publication_date, 
+                        t.created_date,
+                        m.topic_id, 
+                        m.topic_name, 
+                        m.topic_score
+                    FROM read_parquet('{clean_path}') m
+                    INNER JOIN dataset_db.my_datasets t ON m.doi = t.dataset_id
+                """)
+                con.execute("INSERT INTO processed_meta_files VALUES (?)", [file_path])
+                con.execute("COMMIT")
+            except Exception as e:
+                con.execute("ROLLBACK")
+                print(f"\n[!] Error processing {file_path}: {e}")
+                break
+
+            current_elapsed = time.time() - start_time
+            time_str = time.strftime("%M:%S", time.gmtime(current_elapsed))
+            print(
+                f"\rScanned: {len(done_files) + i}/{len(all_files)} | Elapsed: {time_str}",
+                end="",
+                flush=True,
+            )
+
+    # Final deduplication and computation of best_date
+    if con.execute("SELECT count(*) FROM my_datasets_topics_raw").fetchone()[0] > 0:
+        print("\nFinalizing: Computing 'best_date' and deduplicating...")
+        con.execute("""
+            CREATE OR REPLACE TABLE my_datasets_topics AS
+            SELECT 
+                * EXCLUDE (row_num),
+                get_best_date(publication_date, created_date) AS best_date
+            FROM (
+                SELECT *, 
+                ROW_NUMBER() OVER (PARTITION BY doi ORDER BY topic_score DESC) as row_num
+                FROM my_datasets_topics_raw
+            ) WHERE row_num = 1
+        """)
+
+    con.execute("DROP TABLE IF EXISTS my_datasets_topics_raw")
+    con.execute("DETACH dataset_db")
+
+    final_count = con.execute("SELECT count(*) FROM my_datasets_topics").fetchone()[0]
+    print(
+        f"Done! Unique entries: {final_count:,} | Total Time: {(time.time() - start_time) / 60:.2f} min"
+    )
+    con.close()
+
+
+def process_openalex_citations_for_datasets(
+    db_path,
+    dataset_db_path,
+    cite_folder,
+    meta_folder,
+    mem_limit="32GB",
+    temp_dir=None,
+    reset_tables=False,
+):
+    """
+    Creates 'my_datasets_citations' table by linking citations Parquets.
+    Links cited items to their original metadata and computes best_date.
+    """
+    start_time = time.time()
+    con = duckdb.connect(db_path)
+
+    # Register the Python function as a DuckDB UDF
+    try:
+        con.execute("DROP FUNCTION get_best_date")
+    except duckdb.CatalogException:
+        pass
+
+    con.create_function("get_best_date", get_best_dataset_date)
+
+    # Attach the external database
+    con.execute(f"ATTACH '{dataset_db_path}' AS dataset_db (READ_ONLY)")
+
+    # Configuration
+    con.execute(f"SET memory_limit = '{mem_limit}';")
+    con.execute("SET enable_progress_bar = false;")
+    if temp_dir:
+        os.makedirs(temp_dir, exist_ok=True)
+        clean_temp_path = temp_dir.replace("\\", "/")
+        con.execute(f"SET temp_directory = '{clean_temp_path}';")
+
+    # Optional Table Cleanup
+    if reset_tables:
+        print("Resetting tables: dropping existing citation progress and data...")
+        con.execute("DROP TABLE IF EXISTS processed_cite_files")
+        con.execute("DROP TABLE IF EXISTS intermediate_links")
+        con.execute("DROP TABLE IF EXISTS my_datasets_citations")
+
+    # Initialize Tracking Tables
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS processed_cite_files (filename VARCHAR PRIMARY KEY)"
+    )
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS intermediate_links (
+            citing_oa_id VARCHAR, 
+            cited_oa_id VARCHAR, 
+            cited_doi VARCHAR
+        )
+    """)
+
+    # Step 1: Finding citations
+    cite_files = sorted(glob.glob(os.path.join(cite_folder, "*.parquet")))
+    done_cite = {
+        row[0]
+        for row in con.execute("SELECT filename FROM processed_cite_files").fetchall()
+    }
+    to_process = [f for f in cite_files if f not in done_cite]
+
+    if to_process:
+        print(f"Step 1: Finding citations in {len(to_process)} files")
+        for i, file_path in enumerate(to_process, 1):
+            clean_path = file_path.replace("\\", "/")
+            con.execute("BEGIN TRANSACTION")
+            try:
+                con.execute(f"""
+                    INSERT INTO intermediate_links
+                    SELECT c.citing_oa_id, c.cited_oa_id, d.doi
+                    FROM read_parquet('{clean_path}') c
+                    INNER JOIN my_datasets_topics d ON c.cited_oa_id = d.oa_id
+                """)
+                con.execute("INSERT INTO processed_cite_files VALUES (?)", [file_path])
+                con.execute("COMMIT")
+            except Exception as e:
+                con.execute("ROLLBACK")
+                print(f"\n[!] Error on {file_path}: {e}")
+                break
+
+            elapsed = time.time() - start_time
+            print(
+                f"\r > Progress: {len(done_cite) + i}/{len(cite_files)} | Elapsed: {time.strftime('%M:%S', time.gmtime(elapsed))}",
+                end="",
+                flush=True,
+            )
+
+    # Step 2: Mapping citing IDs and joining external dates
+    print("\n\nStep 2: Mapping citing IDs and calculating best_date from external DB")
+    meta_glob = os.path.join(meta_folder, "*.parquet").replace("\\", "/")
+
+    # Join with external dataset_db.my_datasets using created_date
+    con.execute(f"""
+        CREATE OR REPLACE TABLE my_datasets_citations AS
+        SELECT 
+            il.cited_doi, 
+            il.cited_oa_id, 
+            il.citing_oa_id,
+            m.doi as citing_doi, 
+            m.pub_date as citation_date,
+            t.publication_date,
+            t.created_date,
+            get_best_date(t.publication_date, t.created_date) AS best_date
+        FROM intermediate_links il
+        LEFT JOIN read_parquet('{meta_glob}') m ON il.citing_oa_id = m.oa_id
+        LEFT JOIN dataset_db.my_datasets t ON il.cited_doi = t.dataset_id
+    """)
+
+    con.execute("DROP TABLE IF EXISTS intermediate_links")
+    con.execute("DETACH dataset_db")
+
+    total_min = (time.time() - start_time) / 60
+    final_count = con.execute("SELECT count(*) FROM my_datasets_citations").fetchone()[
+        0
+    ]
+    print(
+        f"Done! Final citation count: {final_count:,} | Total Time: {total_min:.2f} min"
+    )
+    con.close()
+
+
+def export_citations_to_ndjson(db_path, out_ndjson, batch_size=100000):
+    """
+    Streams data from my_datasets_citations to an NDJSON file,
+    calculating citation weights and normalizing dates.
+    """
+    start_time = time.time()
+    con = duckdb.connect(db_path)
+    con.execute("SET enable_progress_bar = false;")
+
+    # Updated SELECT to include citing_oa_id for the fallback link
+    results = con.execute("""
+        SELECT 
+            cited_doi,
+            best_date,
+            citing_doi,
+            citing_oa_id,
+            citation_date
+        FROM my_datasets_citations
+    """)
+
+    count = 0
+    print(f"Starting export to {out_ndjson}")
+
+    with open(out_ndjson, "w", encoding="utf-8") as f_out:
+        while True:
+            chunk = results.fetchmany(batch_size)
+            if not chunk:
+                break
+
+            for row in chunk:
+                cited_doi, ds_date, citing_doi, citing_oa_id, c_date_raw = row
+
+                # Normalize the citation date
+                citation_date = None
+                if c_date_raw:
+                    try:
+                        norm_iso_date = _norm_date_iso(str(c_date_raw))
+                        citation_date = get_realistic_date(norm_iso_date)
+                    except (ValueError, TypeError):
+                        citation_date = None
+
+                # Citation link
+                if citing_doi:
+                    # Prefix DOI with https://doi.org/
+                    citation_link = f"https://doi.org/{citing_doi}"
+                else:
+                    # Fallback to OpenAlex ID with https://openalex.org/
+                    link_id = str(citing_oa_id).split("/")[
+                        -1
+                    ]  # Gets just the ID part if it's a full URL
+                    citation_link = f"https://openalex.org/{link_id}"
+
+                # Construct the JSON record
+                rec = {
+                    "dataset_id": cited_doi,
+                    "source": ["openalex"],
+                    "citation_link": citation_link,
+                    "citation_weight": citation_weight(ds_date, citation_date),
+                }
+
+                if citation_date:
+                    rec["citation_date"] = citation_date
+
+                f_out.write(json.dumps(rec) + "\n")
+                count += 1
+
+            # Final progress update for the batch
+            elapsed = time.time() - start_time
+            print(
+                f"\rProcessed: {count:,} | Elapsed: {elapsed:.2f}s", end="", flush=True
+            )
+
+    print(f"\nComplete. Total citation records: {count:,}")
+    con.close()
+
+
+# -------------------- DELETE --------------
 def create_target_doi_table(db_path, folder_path):
     """
     Add DOIs from ndjson slimmed metadata to DUckDB table
@@ -208,7 +543,7 @@ def create_target_doi_table(db_path, folder_path):
     con.close()
 
 
-def process_openalex_topics_for_dois(
+def process_openalex_topics_for_dois_old(
     db_path, meta_folder, mem_limit="32GB", temp_dir=None, file_limit=None
 ):
     """
@@ -301,7 +636,7 @@ def process_openalex_topics_for_dois(
     con.close()
 
 
-def process_openalex_citations_for_dois(
+def process_openalex_citations_for_dois_old(
     db_path, cite_folder, meta_folder, mem_limit="32GB", temp_dir=None
 ):
     """

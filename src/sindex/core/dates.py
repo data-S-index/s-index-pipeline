@@ -201,12 +201,14 @@ def get_realistic_date(date_str: str | None, start_year: int = 1950) -> str | No
 
 
 def get_best_dataset_date(
-    publication_date: str | None, created_date: str | None, start_year: int = 1950
+    publication_date: str | None,
+    created_date: str | None,
 ) -> str | None:
     """
     Returns publication_date if realistic, otherwise created_date if realistic,
     otherwise None.
     """
+    start_year = 1950
     # Try publication date
     realistic_pub = get_realistic_date(publication_date, start_year)
     if realistic_pub:
