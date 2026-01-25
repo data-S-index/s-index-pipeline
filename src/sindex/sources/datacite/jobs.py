@@ -9,19 +9,24 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List
 
+import duckdb
 import orjson
 import requests
 
-from sindex.core.dates import _parse_date_strict
+from sindex.core.dates import _parse_date_strict, get_best_dataset_date
 from sindex.core.http import make_session
+from sindex.core.ids import _norm_doi
 from sindex.core.io import _iter_json_lines
 from sindex.sources.datacite.discovery import (
     get_datacite_doi_record,
     stream_datacite_records,
 )
-from sindex.sources.datacite.normalize import slim_datacite_record
 
-from .normalize import datacite_citations_block_to_records
+from .normalize import (
+    datacite_citations_block_to_records,
+    datacite_citations_block_to_records_optimized,
+    slim_datacite_record,
+)
 
 
 def harvest_datacite_doi_list_to_ndjson(
@@ -480,3 +485,195 @@ def find_citations_dc_from_citation_block(
         citations=citations,
         dataset_pub_date=dataset_pub_date,
     )
+
+
+def batch_find_citations_dc_from_citation_block(
+    input_folder: str, output_filepath: str
+):
+    input_path = Path(input_folder)
+
+    files = list(input_path.glob("*.ndjson"))
+    total_files = len(files)
+
+    if total_files == 0:
+        print(f"No .ndjson files found in {input_folder}")
+        return
+
+    print(f"Starting processing of {total_files} files")
+    count_citations = 0
+    with open(output_filepath, "w", encoding="utf-8") as f_out:
+        for idx, file_path in enumerate(files, 1):
+            print(
+                f"\rProcessing file {idx} of {total_files} ({file_path.name})",
+                end="",
+                flush=True,
+            )
+
+            with open(file_path, "r", encoding="utf-8") as f_in:
+                for line in f_in:
+                    if not line.strip():
+                        continue
+
+                    data = json.loads(line)
+
+                    # Check if citations exists and is not empty/None
+                    citations = data.get("citations")
+                    if not citations or not any(citations.values()):
+                        continue
+
+                    # Extract target_doi
+                    target_doi = None
+                    for item in data.get("identifiers", []):
+                        if item.get("identifier_type") == "doi":
+                            target_doi = item.get("identifier")
+                            break
+
+                    if not target_doi:
+                        continue
+
+                    # Best pub date
+                    publication_date = data.get("publication_date")
+                    created_date = data.get("created_date")
+                    best_date = get_best_dataset_date(publication_date, created_date)
+
+                    # Process
+                    citation_records = datacite_citations_block_to_records(
+                        target_doi=target_doi,
+                        citations=citations,
+                        dataset_pub_date=best_date,
+                    )
+
+                    for record in citation_records:
+                        f_out.write(json.dumps(record) + "\n")
+                        count_citations += 1
+
+                    print(
+                        f"\rProcessing file {idx}/{total_files} | Total Citations: {count_citations:,}",
+                        end="",
+                        flush=True,
+                    )
+
+    # Final newline to clear the progress line
+    print(f"\nDone! Saved {count_citations:,} citations")
+
+
+def batch_find_citations_dc_from_citation_block_optimized(
+    input_folder: str, output_filepath: str, db_path: str
+):
+    input_path = Path(input_folder)
+    files = list(input_path.glob("*.ndjson"))
+
+    if not files:
+        print(f"[-] No .ndjson files found in {input_folder}")
+        return
+
+    print(f"[*] Found {len(files)} file(s). Connecting to DuckDB...")
+
+    with duckdb.connect(db_path, read_only=True) as conn:
+        total_count_citations = 0
+
+        with open(output_filepath, "w", encoding="utf-8") as f_out:
+            for idx, file_path in enumerate(files, 1):
+                start_time = time.time()
+                print(f"\n--- Processing: {file_path.name} ({idx}/{len(files)}) ---")
+
+                # --- STEP 1: EXTRACTION ---
+                print(
+                    f"[{time.strftime('%H:%M:%S')}] Step 1: Extracting DOIs and loading file into memory..."
+                )
+                unique_dois_in_file = set()
+                file_data = []
+
+                with open(file_path, "r", encoding="utf-8") as f_in:
+                    for line in f_in:
+                        stripped_line = line.strip()
+                        if not stripped_line:
+                            continue
+
+                        item = json.loads(stripped_line)
+                        file_data.append(item)
+
+                        citations = item.get("citations") or {}
+                        for raw_doi in citations.get("dois", []) or []:
+                            normed = _norm_doi(raw_doi)
+
+                            if normed and isinstance(normed, str) and normed.strip():
+                                unique_dois_in_file.add(normed.strip())
+
+                print(
+                    f"    -> Extracted {len(file_data):,} rows and {len(unique_dois_in_file):,} unique citation DOIs."
+                )
+                print(list(unique_dois_in_file)[:10])
+
+                # --- STEP 2: BULK FETCH ---
+                print(
+                    f"[{time.strftime('%H:%M:%S')}] Step 2: Querying DuckDB for {len(unique_dois_in_file):,} DOIs..."
+                )
+                db_dates = {}
+
+                if unique_dois_in_file:
+                    doi_data = [(d,) for d in unique_dois_in_file]
+
+                    doi_rel = (
+                        conn.values(doi_data)
+                        .set_alias("t")
+                        .project("CAST(col0 AS VARCHAR) AS search_doi")
+                    )
+
+                    results = conn.execute("""
+                        SELECT t.search_doi, o.pubdate 
+                        FROM doi_rel t
+                        INNER JOIN openalex_pubdate o ON (t.search_doi = o.doi)
+                    """).fetchall()
+
+                    db_dates = {row[0]: str(row[1]) for row in results if row[1]}
+
+                print(f"    -> Found {len(db_dates):,} matches.")
+
+                # --- STEP 3: PROCESSING & WRITING ---
+                print(
+                    f"[{time.strftime('%H:%M:%S')}] Step 3: Generating records and writing to disk..."
+                )
+                file_citation_count = 0
+
+                for row_idx, data in enumerate(file_data):
+                    target_doi = next(
+                        (
+                            i.get("identifier")
+                            for i in data.get("identifiers", [])
+                            if i.get("identifier_type") == "doi"
+                        ),
+                        None,
+                    )
+                    if not target_doi:
+                        continue
+
+                    best_date = get_best_dataset_date(
+                        data.get("publication_date"), data.get("created_date")
+                    )
+
+                    citation_records = datacite_citations_block_to_records_optimized(
+                        target_doi=target_doi,
+                        citations=data.get("citations"),
+                        dataset_pub_date=best_date,
+                        prefetched_dates=db_dates,
+                    )
+
+                    for record in citation_records:
+                        f_out.write(json.dumps(record) + "\n")
+                        file_citation_count += 1
+
+                    # Progress every 1000 rows
+                    if row_idx % 1000 == 0:
+                        print(
+                            f"\r    -> Row {row_idx:,}/{len(file_data):,} | Total Citations so far: {file_citation_count:,}",
+                            end="",
+                        )
+
+                elapsed = time.time() - start_time
+                total_count_citations += file_citation_count
+                print(f"\n[!] Finished {file_path.name} in {elapsed:.2f} seconds.")
+
+    print("\nBatch Completed")
+    print(f"Total Citations Saved: {total_count_citations:,}")
+    print(f"Output: {output_filepath}")

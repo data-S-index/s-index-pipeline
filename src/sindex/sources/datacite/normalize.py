@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Dict, List
 
 from sindex.core.dates import _norm_date_iso
@@ -262,3 +263,94 @@ def datacite_citations_block_to_records(
         )
 
     return dedupe_citations_by_link(results)
+
+
+def transform_ndjson(input_file, output_file):
+    norm_doi_list = []
+    count = 0
+    with open(input_file, "r") as f_in, open(output_file, "w") as f_out:
+        for line in f_in:
+            data = json.loads(line)
+
+            # 1. Extract the dataset_id (assuming first DOI is the identifier)
+            dataset_id = None
+            for ids in data.get("identifiers", []):
+                if ids.get("identifier_type") == "doi":
+                    dataset_id = ids.get("identifier")
+                    break
+
+            # 2. Process Citations
+            citations_data = data.get("citations", {})
+
+            # Handle DOIs list
+            for doi in citations_data.get("dois", []):
+                # Add to normalized list
+                norm_doi_list.append(_norm_doi(doi))
+
+                # Create the individual entry
+                entry = {
+                    "dataset_id": dataset_id,
+                    "source": ["datacite"],
+                    "citation_link": _norm_doi_url(doi),
+                    "citation_weight": 1.0,
+                }
+
+                # Write to new ndjson file
+                f_out.write(json.dumps(entry) + "\n")
+                count += 1
+
+    return len(norm_doi_list), count
+
+
+def datacite_citations_block_to_records_optimized(
+    target_doi: str,
+    citations: Dict[str, list] | None,
+    dataset_pub_date: str | None,
+    prefetched_dates: Dict[str, str],
+) -> List[Dict[str, object]]:
+    results = []
+    for citation_link_raw in (citations or {}).get("dois", []) or []:
+        citation_doi = _norm_doi(citation_link_raw)
+        if not citation_doi:
+            continue
+
+        rec = {
+            "dataset_id": target_doi,
+            "source": ["datacite"],
+            "citation_link": _norm_doi_url(citation_doi),
+        }
+
+        # 1. Check the pre-fetched batch from DuckDB
+        citation_date = prefetched_dates.get(citation_doi)
+
+        # 2. Fallback if not found in the batch
+        if not citation_date:
+            try:
+                citation_date = best_publication_date_for_doi(citation_doi)
+            except Exception as e:
+                print(f"\n[!] Error fetching date for {citation_doi}: {e}")
+                citation_date = None
+
+        if citation_date:
+            rec["citation_date"] = citation_date
+
+        rec["citation_weight"] = citation_weight(dataset_pub_date, citation_date)
+        results.append(rec)
+
+    # For other identifiers we cannot get a citation_date
+    for obj in (citations or {}).get("other", []) or []:
+        if not isinstance(obj, dict):
+            continue
+        id_val = (obj.get("id") or "").strip()
+        if not id_val:
+            continue
+        results.append(
+            {
+                "dataset_id": target_doi,
+                "source": ["datacite"],
+                "citation_link": id_val,
+                "citation_weight": 1.0,
+            }
+        )
+
+    return results

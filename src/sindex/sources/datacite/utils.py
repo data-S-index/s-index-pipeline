@@ -1,6 +1,4 @@
 import os
-import sys
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -35,24 +33,19 @@ def get_best_publication_date_datacite_record(attr):
 def get_relevant_citations_block_from_ndjson(
     db_path, ndjson_folder, target_table, output_file_path, reset_log=False
 ):
-    # 1. PRE-PROCESS DIRECTORY & RESET
     output_dir = os.path.dirname(output_file_path)
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
-    # If reset is requested, kill the output file once BEFORE the loop starts
-    if reset_log and os.path.exists(output_file_path):
-        print(f"[{datetime.now()}] Deleting old output file for fresh start...")
-        os.remove(output_file_path)
-
     con = duckdb.connect(db_path)
-    con.execute("SET enable_progress_bar = false;")
-    start_time = time.time()
 
-    con.execute(f"CREATE INDEX IF NOT EXISTS idx_ds_id ON {target_table} (dataset_id);")
+    con.execute("SET temp_directory = './duckdb_temp/'")
+    con.execute("SET max_memory = '8GB'")
 
     if reset_log:
         con.execute("DROP TABLE IF EXISTS processed_files_citation_blocks")
+        if os.path.exists(output_file_path):
+            os.remove(output_file_path)
 
     con.execute("""
         CREATE TABLE IF NOT EXISTS processed_files_citation_blocks (
@@ -61,98 +54,77 @@ def get_relevant_citations_block_from_ndjson(
         )
     """)
 
-    processed_set = set(
+    initial_count = con.execute(
+        "SELECT count(*) FROM processed_files_citation_blocks"
+    ).fetchone()[0]
+
+    processed_set = {
         r[0]
         for r in con.execute(
             "SELECT filename FROM processed_files_citation_blocks"
         ).fetchall()
-    )
+    }
+
     all_files = [str(f) for f in Path(ndjson_folder).glob("*.ndjson")]
     new_files = [f for f in all_files if os.path.basename(f) not in processed_set]
 
     if not new_files:
         print(f"[{datetime.now()}] No new files to process.")
+        print(
+            f"Status: {len(all_files):,} files found in folder, all {initial_count:,} are already logged."
+        )
         con.close()
         return
 
-    total_scanned = 0
-    total_matched = 0
-    total_saved = 0
-
-    print(f"Processing {len(new_files)} files...")
+    print(f"[{datetime.now()}] Batch processing {len(new_files)} files...")
 
     try:
-        for i, file_path in enumerate(new_files, 1):
-            filename = os.path.basename(file_path)
+        con.execute(f"""
+            CREATE TEMP TABLE batch_results AS
+            SELECT 
+                A.identifiers, 
+                A.citations,
+                A.publication_date,
+                A.created_date
+            FROM read_ndjson_auto(
+                {new_files}, 
+                columns={{
+                    'identifiers': 'JSON[]', 
+                    'citations': 'JSON', 
+                    'publication_date': 'VARCHAR', 
+                    'created_date': 'VARCHAR'
+                }}
+            ) AS A
+            INNER JOIN {target_table} AS B 
+                ON A.identifiers[1]->>'identifier' = B.dataset_id
+        """)
 
-            stats = con.execute(f"""
-                SELECT 
-                    count(*) as scanned,
-                    count(B.dataset_id) as matched,
-                    count(CASE WHEN B.dataset_id IS NOT NULL 
-                               AND A.citations IS NOT NULL 
-                               AND A.citations != '{{}}'::JSON THEN 1 END) as saved
-                FROM read_ndjson_auto(
-                    '{file_path}', 
-                    columns={{'identifiers': 'JSON[]', 'citations': 'JSON'}}
-                ) AS A
-                LEFT JOIN {target_table} AS B 
-                  ON A.identifiers[1]->>'identifier' = B.dataset_id
-            """).fetchone()
+        metrics = con.execute("""
+            SELECT 
+                count(*) as total_matched,
+                count(*) filter (WHERE citations IS NOT NULL) as total_saved
+            FROM batch_results
+        """).fetchone()
 
-            f_scanned, f_matched, f_saved = stats
-            total_scanned += f_scanned
-            total_matched += f_matched
-            total_saved += f_saved
+        total_matched, total_saved = metrics
 
-            elapsed = time.time() - start_time
-            sys.stdout.write(
-                f"\rFiles: {i}/{len(new_files)} | Scanned: {total_scanned:,} | "
-                f"Matched: {total_matched:,} | Saved: {total_saved:,} | {elapsed:.1f}s"
-            )
-            sys.stdout.flush()
+        con.execute(f"""
+            COPY (SELECT * FROM batch_results WHERE citations IS NOT NULL) 
+            TO '{output_file_path}' (FORMAT JSON)
+        """)
 
-            # 2. THE REFINED WRITE LOGIC
-            if f_saved > 0:
-                # Strictly check disk state:
-                # If file exists and isn't empty, we MUST append.
-                if (
-                    os.path.exists(output_file_path)
-                    and os.path.getsize(output_file_path) > 0
-                ):
-                    mode = " (APPEND TRUE, FORMAT JSON)"
-                else:
-                    mode = " (FORMAT JSON)"
+        file_entries = [(os.path.basename(f),) for f in new_files]
+        con.executemany(
+            "INSERT INTO processed_files_citation_blocks (filename) VALUES (?)",
+            file_entries,
+        )
 
-                con.execute(f"""
-                    COPY (
-                        SELECT A.identifiers, A.citations
-                        FROM read_ndjson_auto(
-                            '{file_path}', 
-                            columns={{'identifiers': 'JSON[]', 'citations': 'JSON'}}
-                        ) AS A
-                        INNER JOIN {target_table} AS B 
-                           ON A.identifiers[1]->>'identifier' = B.dataset_id
-                        WHERE A.citations IS NOT NULL 
-                          AND A.citations != '{{}}'::JSON
-                    ) TO '{output_file_path}' {mode};
-                """)
-
-            con.execute(
-                "INSERT INTO processed_files_citation_blocks (filename) VALUES (?)",
-                [filename],
-            )
-
-        print("\nProcessing Complete!")
-        # Final physical verification
-        if os.path.exists(output_file_path):
-            with open(output_file_path, "rb") as f:
-                actual_lines = sum(1 for _ in f)
-            print(f"Verified Lines in File:   {actual_lines:,}")
-            if actual_lines != total_saved:
-                print("WARNING: Physical file count does not match counter!")
+        print(f"[{datetime.now()}] Complete!")
+        print(f"{'Total DOIs Matched:':<25} {total_matched:,}")
+        print(f"{'Total Records Saved:':<25} {total_saved:,}")
 
     except Exception as e:
-        print(f"\n[{datetime.now()}] Error: {e}")
+        print(f"Error: {e}")
     finally:
+        con.execute("DROP TABLE IF EXISTS batch_results")
         con.close()
