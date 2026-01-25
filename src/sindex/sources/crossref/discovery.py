@@ -1,6 +1,6 @@
 import requests
 
-from sindex.core.dates import _as_iso_from_dateparts
+from sindex.core.dates import _as_iso_from_dateparts, _norm_date_iso, get_realistic_date
 from sindex.core.http import make_session
 from sindex.core.ids import _norm_doi
 
@@ -49,15 +49,26 @@ def fetch_crossref_pubdate(doi: str, session: requests.Session | None = None) ->
     """
     crossref_record = get_crossref_doi_record(doi, session=session)
     if not crossref_record:  # None / not found
-        return ""
+        return None
 
     msg = crossref_record.get("message") or {}
 
     # Prefer publisher-declared dates in order
     for key in ("published", "issued", "published-online", "published-print"):
         dp = (msg.get(key) or {}).get("date-parts")
-        iso = _as_iso_from_dateparts(dp) if dp else ""
-        if iso:
-            return iso
+        iso_raw = _as_iso_from_dateparts(dp) if dp else None
 
-    return ""
+        if not iso_raw:
+            continue
+
+        try:
+            norm_iso = _norm_date_iso(iso_raw)
+            realistic = get_realistic_date(norm_iso)
+            if realistic:
+                return realistic
+
+        except Exception:
+            # Move to the next
+            continue
+
+    return None

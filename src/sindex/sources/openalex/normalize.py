@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-from sindex.core.dates import _norm_date_iso
+from sindex.core.dates import _norm_date_iso, get_realistic_date
 from sindex.core.ids import _norm_doi_url
 from sindex.metrics.dedup import dedupe_citations_by_link
 from sindex.metrics.weights import citation_weight
@@ -24,13 +24,27 @@ def openalex_citing_works_to_citations(
         if not citation_link:
             continue
 
-        citation_date_raw = c.get("publication_date")
         citation_date = None
-        if citation_date_raw:
+
+        # Try OpenAlex publication date
+        pub_date_raw = c.get("publication_date")
+        if pub_date_raw:
             try:
-                citation_date = _norm_date_iso(citation_date_raw)
-            except ValueError:
+                norm_iso_date = _norm_date_iso(str(pub_date_raw))
+                citation_date = get_realistic_date(norm_iso_date)
+            except (ValueError, TypeError):
                 citation_date = None
+
+        # Fallback to OpenAlex publication year
+        if not citation_date:
+            pub_year_raw = c.get("publication_year")
+            if pub_year_raw:
+                try:
+                    # Convert year to ISO format (e.g., "2024-01-01")
+                    norm_iso_year = _norm_date_iso(str(pub_year_raw))
+                    citation_date = get_realistic_date(norm_iso_year)
+                except (ValueError, TypeError):
+                    citation_date = None
 
         rec: Dict[str, object] = {
             "dataset_id": dataset_id,

@@ -2,7 +2,7 @@ import os
 
 import duckdb
 
-from sindex.core.dates import _norm_date_iso, _to_datetime_utc
+from sindex.core.dates import _norm_date_iso, _to_datetime_utc, get_best_dataset_date
 from sindex.core.http import _is_reachable, is_url
 from sindex.core.ids import _norm_dataset_id, _norm_doi, _norm_doi_url, is_working_doi
 from sindex.metrics.citations import merge_citations_dicts
@@ -60,9 +60,14 @@ def dataset_index_series_from_doi(doi):
         citations_block = None
     else:
         slim = slim_datacite_record(rec)
-        pubdate = slim.get("publication_date")
-        pub_dt = _to_datetime_utc(pubdate)
-        pubyear = pub_dt.year if pub_dt else None
+        publication_date = slim.get("publication_date")
+        created_date = slim.get("created_date")
+        pubdate = get_best_dataset_date(publication_date, created_date)
+        if pubdate:
+            pub_dt = _to_datetime_utc(pubdate)
+            pubyear = pub_dt.year if pub_dt else None
+        else:
+            pubyear = None
         citations_block = slim.get("citations")
 
     dataset_report["metadata"] = slim

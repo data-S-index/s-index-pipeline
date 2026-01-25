@@ -2,12 +2,13 @@ from typing import Dict, Iterator, Tuple
 
 import requests
 
-from sindex.core.dates import _norm_date_iso
+from sindex.core.dates import _norm_date_iso, get_realistic_date
 from sindex.core.http import make_session
 from sindex.core.ids import _norm_doi
 
 from .client import get_datacite_record_by_norm_doi
 from .constants import BASE_API_URL
+from .utils import get_best_publication_date_datacite_record
 
 
 def get_datacite_doi_record(
@@ -112,18 +113,30 @@ def fetch_datacite_pubdate(doi: str, session: requests.Session | None = None) ->
     """
     datacite_record = get_datacite_doi_record(doi)
     if not datacite_record:  # None (404 / invalid DOI)
-        return ""
+        return None
 
     attrs = datacite_record.get("attributes") or {}
 
-    # Try "created", "published", or "issued" dates in this order of preference
-    for key in ("published", "created", "registered"):
-        val = attrs.get(key)
-        if not val:
-            continue
-        try:
-            return _norm_date_iso(val)
-        except Exception:
-            continue
+    # Priority: Use "Best Date" logic (Issued date -> Published date -> Published year)
+    publication_date = get_best_publication_date_datacite_record(attrs)
 
-    return ""
+    if publication_date:
+        try:
+            realistic_date = get_realistic_date(publication_date)
+            if realistic_date:
+                return realistic_date
+        except Exception:
+            pass  # Move on to try created date
+
+    # Try "created" date
+    created_val = attrs.get("created")
+    if created_val:
+        try:
+            norm_iso = _norm_date_iso(created_val)
+            realistic_date = get_realistic_date(norm_iso)
+            if realistic_date:
+                return realistic_date
+        except Exception:
+            pass
+
+    return None

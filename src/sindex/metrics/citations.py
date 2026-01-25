@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
+import os
+import sys
 from datetime import datetime
 from typing import Any, Iterable, Optional
+
+import orjson
 
 from sindex.core.dates import _to_datetime_utc
 
@@ -111,3 +116,122 @@ def merge_citations_dicts(
                 best_dt[key] = dt
 
     return list(merged.values())
+
+
+def merge_citations_from_files(input_paths: list[str], output_path: str):
+    """
+    Reads records from NDJSON files, prints line counts per file,
+    and saves the merged deduplicated output.
+    """
+    total_input_count = 0
+    file_reports = {}
+
+    def stream_and_count(paths: list[str]):
+        nonlocal total_input_count
+        for path in paths:
+            file_line_count = 0
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        file_line_count += 1
+                        yield json.loads(line)
+
+            file_reports[path] = file_line_count
+            total_input_count += file_line_count
+
+    # 1. Merge the records
+    merged_list = merge_citations_dicts([stream_and_count(input_paths)])
+    output_count = len(merged_list)
+
+    # 2. Write the output
+    with open(output_path, "w", encoding="utf-8") as f:
+        for record in merged_list:
+            f.write(json.dumps(record) + "\n")
+
+    # 3. Print the Summary Report
+    print("--- Merge Summary ---")
+    for path, count in file_reports.items():
+        print(f"File: {path} | Lines: {count}")
+    print("-" * 21)
+    print(f"Total Input Records:  {total_input_count}")
+    print(f"Total Output Records: {output_count}")
+    print(f"Duplicates Removed:   {total_input_count - output_count}")
+    print(f"Saved to: {output_path}")
+
+
+def merge_citations_from_files_fast(
+    input_paths: list[str], output_path: str, update_interval: int = 10000
+):
+    merged = {}
+    total_in = 0
+
+    # Filter out None or empty strings immediately
+    valid_paths = [p for p in input_paths if p and isinstance(p, str)]
+
+    print(f"Starting merge of {len(valid_paths)} valid files...")
+
+    for path in valid_paths:
+        # Skip if the file doesn't exist
+        if not os.path.isfile(path):
+            print(f"  ! Warning: Skipping missing file: {path}")
+            continue
+
+        with open(path, "rb") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+
+                total_in += 1
+                if total_in % update_interval == 0:
+                    sys.stdout.write(
+                        f"\rRecords processed: {total_in:,} | Unique found: {len(merged):,}"
+                    )
+                    sys.stdout.flush()
+
+                rec = orjson.loads(line)
+
+                # Use .get() safely in case dataset_id or link are missing in a line
+                did = rec.get("dataset_id")
+                lnk = rec.get("citation_link")
+                if not did or not lnk:
+                    continue
+
+                key = (did, lnk)
+
+                # Source handling
+                src = rec.get("source") or []
+                new_src_set = {src} if isinstance(src, str) else set(src)
+
+                if key not in merged:
+                    rec["source"] = new_src_set
+                    merged[key] = rec
+                    continue
+
+                existing = merged[key]
+                existing["source"].update(new_src_set)
+
+                # Date/Weight logic
+                new_date = rec.get("citation_date")
+                ext_date = existing.get("citation_date")
+
+                if new_date:
+                    if not ext_date or new_date < ext_date:
+                        existing["citation_date"] = new_date
+                        existing["citation_weight"] = rec.get("citation_weight")
+
+    sys.stdout.write(
+        f"\rFinished processing {total_in:,} records. Unique: {len(merged):,}\n"
+    )
+
+    # Final Write
+    if not merged:
+        print("No records found to write.")
+        return
+
+    print(f"Writing to {output_path}...")
+    with open(output_path, "wb") as f:
+        for rec in merged.values():
+            rec["source"] = sorted(rec["source"])
+            f.write(orjson.dumps(rec) + b"\n")
+
+    print("Done!")

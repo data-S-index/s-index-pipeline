@@ -6,7 +6,7 @@ from typing import List, Optional
 
 import requests
 
-from sindex.core.dates import _norm_date_iso
+from sindex.core.dates import _norm_date_iso, get_realistic_date
 from sindex.core.ids import _norm_doi_url
 
 from .client import get_openalex_record, make_openalex_session
@@ -106,23 +106,22 @@ def fetch_openalex_pubdate(doi: str, session: requests.Session | None = None) ->
     """
     data = get_openalex_doi_record(doi, session=session)
     if not data:  # None (invalid DOI or 404)
-        return ""
+        return None
 
-    # 1) Prefer publication_date (YYYY-MM-DD)
-    pub_date = data.get("publication_date") or ""
-    if pub_date:
+    for key in ["publication_date", "publication_year"]:
+        val = data.get(key)
+
+        if not val:
+            continue
+
         try:
-            return _norm_date_iso(pub_date)
-        except Exception:
-            # If issue, fall back to year
-            pass
+            norm_iso = _norm_date_iso(str(val))
+            realistic = get_realistic_date(norm_iso)
+            if realistic:
+                return realistic
 
-    # 2) Fallback year-only ISO
-    year = data.get("publication_year")
-    if year is not None and year != "":
-        try:
-            return _norm_date_iso(str(year))
         except Exception:
-            return ""
+            # Move to the next candidate
+            continue
 
-    return ""
+    return None
