@@ -6,6 +6,8 @@ from typing import Dict, List, Optional
 
 import requests
 
+from sindex.core.dates import _norm_date_iso, get_realistic_date
+
 from .client import make_openalex_session
 from .discovery import (
     extract_openalex_id,
@@ -29,6 +31,13 @@ def find_citations_oa(
       - discovery: OA id -> citing works (raw)
       - normalize: citing works -> citation objects
     """
+    if dataset_pub_date:
+        try:
+            dataset_pub_date = _norm_date_iso(dataset_pub_date)
+            dataset_pub_date = get_realistic_date(dataset_pub_date)
+        except ValueError:
+            dataset_pub_date = None
+
     s = session or make_openalex_session(api_key=api_key)
 
     record = get_openalex_doi_record(doi, session=s, mailto=email)

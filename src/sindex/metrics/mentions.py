@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import sys
 from datetime import datetime
 from typing import Any, Iterable, Optional
 
@@ -111,3 +113,42 @@ def merge_mentions_dicts(
                 best_dt[key] = dt
 
     return list(merged.values())
+
+
+def combine_mentions(input_paths, output_path):
+    """
+    Combines multiple .ndjson files with a progress counter that overwrites itself.
+    """
+    current_now = datetime.now().isoformat()
+    processed_count = 0
+
+    try:
+        with open(output_path, "w", encoding="utf-8") as outfile:
+            for file_path in input_paths:
+                with open(file_path, "r", encoding="utf-8") as infile:
+                    for line in infile:
+                        line = line.strip()
+                        if not line:
+                            continue
+
+                        entry = json.loads(line)
+
+                        if entry.get("mention_date"):
+                            entry["placeholder_date"] = False
+                        else:
+                            entry["placeholder_date"] = True
+                            entry["mention_date"] = current_now
+
+                        outfile.write(json.dumps(entry) + "\n")
+                        processed_count += 1
+
+                        # Update progress every 10,000 lines
+                        if processed_count % 10000 == 0:
+                            sys.stdout.write(f"\rLines processed: {processed_count:,}")
+                            sys.stdout.flush()
+
+        # Final print to move to a new line and show total
+        print(f"\nFinished! Total entries saved: {processed_count:,}")
+
+    except Exception as e:
+        print(f"\nAn error occurred: {e}")
