@@ -1222,12 +1222,12 @@ def create_s_index_identifier_table(db_path, limit=None):
 
 def create_s_index_name_affiliation_table(db_path, limit=None):
     """
-    Create table with S-index of researchers regrouped based on matching name + affiliations set
-    regrouping by exact set of affiliations so John Smith MIT only, John Smith Harvard only,
-    and John Smith Harvard + MIT will all have distinct datasets
-    Creators with no affiliation are accounted (all datasets with John Smith no affiliations regrouped together)
+    Create table with S-index of researchers regrouped based on name and affiliation
+    Igoring creators with no name
+    Regrouping is by set of affiliations such that John Smith MIT, John Smith Harvard,
+    and John Smith MIT + Harvard, and John Smith <no affiliation> are regrouped separately
     """
-    print("Creating S_index_name_affiliation")
+    print("Creating s_index_name_affiliation table")
     start_time = time.time()
 
     source_query = "SELECT * FROM creators_table"
@@ -1235,12 +1235,14 @@ def create_s_index_name_affiliation_table(db_path, limit=None):
         source_query += f" LIMIT {limit}"
 
     with duckdb.connect(db_path) as con:
+        # Settings
         con.execute("SET preserve_insertion_order=false")
-        con.execute("SET memory_limit='16GB'")
+        con.execute("SET threads=1")  # Serial mode for safety
+        con.execute("SET memory_limit='32GB'")
         con.execute("SET temp_directory='duckdb_tmp'")
 
         query = f"""
-        CREATE OR REPLACE TABLE S_index_name_affiliation AS
+        CREATE OR REPLACE TABLE s_index_name_affiliation AS
         WITH source_data AS (
             {source_query}
         )
@@ -1248,8 +1250,7 @@ def create_s_index_name_affiliation_table(db_path, limit=None):
             -- 1. GROUPING KEYS
             LOWER(TRIM(creator_name)) as grouping_name,
             
-            -- Normalize (Trim + Lower) -> Sort -> Cast to String for Grouping
-            -- ['Harvard ', 'MIT'] and ['mit', 'harvard'] are treated as identical
+            -- If affiliation is empty [], returns '[]' as the signature affiliation
             list_sort(
                 list_transform(
                     affiliations::VARCHAR[], 
@@ -1258,14 +1259,9 @@ def create_s_index_name_affiliation_table(db_path, limit=None):
             )::VARCHAR as affiliation_set_signature,
             
             -- 2. CONTEXT
-            list_distinct(list(creator_name)) as name_variations,
-            
-            -- Store the clean list for display (taking the first seen version)
-            ANY_VALUE(list_sort(affiliations::VARCHAR[])) as affiliation_set,
-            
             mode(name_type) as name_type,
 
-            -- 3. DOMAIN
+            -- 3. DOMAIN & CAREER
             mode(topic_id) as primary_topic_id,
             mode(topic_name) as primary_topic_name,
             mode(subfield_id) as primary_subfield_id,
@@ -1301,12 +1297,12 @@ def create_s_index_name_affiliation_table(db_path, limit=None):
             con.execute(query)
 
             row_count = con.execute(
-                "SELECT COUNT(*) FROM S_index_name_affiliation"
+                "SELECT COUNT(*) FROM s_index_name_affiliation"
             ).fetchone()[0]
             end_time = time.time()
 
-            print("Success! S_index_name_affiliation table created.")
-            print(f"Total unique name-affiliation sets: {row_count:,}")
+            print("Success! s_index_name_affiliation table created.")
+            print(f"Total unique Name-Affiliation sets: {row_count:,}")
             print(f"Execution time: {end_time - start_time:.2f} seconds")
 
             print("\nPreview")
@@ -1314,10 +1310,10 @@ def create_s_index_name_affiliation_table(db_path, limit=None):
                 con.execute("""
                 SELECT 
                     grouping_name, 
-                    affiliation_set, 
+                    affiliation_set_signature, 
                     n_datasets, 
                     S_index_topics 
-                FROM S_index_name_affiliation 
+                FROM s_index_name_affiliation 
                 LIMIT 5
             """).df()
             )
