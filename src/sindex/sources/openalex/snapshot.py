@@ -416,6 +416,13 @@ def export_citations_to_ndjson(db_path, out_ndjson, batch_size=100000):
             for row in chunk:
                 cited_doi, ds_date, citing_doi, citing_oa_id, c_date_raw = row
 
+                if ds_date:
+                    try:
+                        ds_date = _norm_date_iso(ds_date)
+                        ds_date = get_realistic_date(ds_date)
+                    except ValueError:
+                        ds_date = None
+
                 # Normalize the citation date
                 citation_date = None
                 if c_date_raw:

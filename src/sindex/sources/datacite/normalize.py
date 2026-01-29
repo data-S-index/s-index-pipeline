@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import json
-from typing import Dict, List
+from typing import Any, Dict, List
 
-from sindex.core.dates import _norm_date_iso
+from sindex.core.dates import _norm_date_iso, get_realistic_date
 from sindex.core.ids import _norm_doi, _norm_doi_url
 from sindex.enrich.pubdate.jobs import best_publication_date_for_doi
 from sindex.metrics.dedup import dedupe_citations_by_link
@@ -223,6 +222,14 @@ def datacite_citations_block_to_records(
     """
     Convert a slimmed DataCite citations block into normalized citation records.
     """
+
+    if dataset_pub_date:
+        try:
+            dataset_pub_date = _norm_date_iso(dataset_pub_date)
+            dataset_pub_date = get_realistic_date(dataset_pub_date)
+        except ValueError:
+            dataset_pub_date = None
+
     results: List[Dict[str, object]] = []
 
     # DOIs → normalize + fetch date
@@ -238,7 +245,15 @@ def datacite_citations_block_to_records(
             "citation_link": citation_link,
         }
 
-        citation_date = best_publication_date_for_doi(citation_doi)
+        citation_date = None
+        citation_date_raw = best_publication_date_for_doi(citation_doi)
+        if citation_date_raw:
+            try:
+                norm_iso_date = _norm_date_iso(str(citation_date_raw))
+                citation_date = get_realistic_date(norm_iso_date)
+            except (ValueError, TypeError):
+                citation_date = None
+
         if citation_date:
             rec["citation_date"] = citation_date
 
@@ -265,54 +280,50 @@ def datacite_citations_block_to_records(
     return dedupe_citations_by_link(results)
 
 
-def transform_ndjson(input_file, output_file):
-    norm_doi_list = []
-    count = 0
-    with open(input_file, "r") as f_in, open(output_file, "w") as f_out:
-        for line in f_in:
-            data = json.loads(line)
+def get_citation_date(doi: str, date_map: Dict[str, str]) -> str | None:
+    """
+    Hybrid lookup:
+    1. Check the high-speed Parquet cache (date_map) first.
+    2. Fallback to best_publication_date_for_doi only if missing.
+    """
+    # 1. High-speed cache check
+    if doi in date_map:
+        return date_map[doi]
 
-            # 1. Extract the dataset_id (assuming first DOI is the identifier)
-            dataset_id = None
-            for ids in data.get("identifiers", []):
-                if ids.get("identifier_type") == "doi":
-                    dataset_id = ids.get("identifier")
-                    break
-
-            # 2. Process Citations
-            citations_data = data.get("citations", {})
-
-            # Handle DOIs list
-            for doi in citations_data.get("dois", []):
-                # Add to normalized list
-                norm_doi_list.append(_norm_doi(doi))
-
-                # Create the individual entry
-                entry = {
-                    "dataset_id": dataset_id,
-                    "source": ["datacite"],
-                    "citation_link": _norm_doi_url(doi),
-                    "citation_weight": 1.0,
-                }
-
-                # Write to new ndjson file
-                f_out.write(json.dumps(entry) + "\n")
-                count += 1
-
-    return len(norm_doi_list), count
+    # 2. Fallback to API/DB lookup
+    return best_publication_date_for_doi(doi)
 
 
 def datacite_citations_block_to_records_optimized(
     target_doi: str,
     citations: Dict[str, list] | None,
-    dataset_pub_date: str | None,
-    prefetched_dates: Dict[str, str],
-) -> List[Dict[str, object]]:
+    date_map: Dict[str, str],  # Pass the cache here
+    *,
+    dataset_pub_date: str | None = None,
+) -> List[Dict[str, Any]]:
+    if dataset_pub_date:
+        try:
+            dataset_pub_date = _norm_date_iso(dataset_pub_date)
+            dataset_pub_date = get_realistic_date(dataset_pub_date)
+        except ValueError:
+            dataset_pub_date = None
+
     results = []
+
     for citation_link_raw in (citations or {}).get("dois", []) or []:
         citation_doi = _norm_doi(citation_link_raw)
         if not citation_doi:
             continue
+
+        # Use the hybrid lookup
+        citation_date = None
+        citation_date_raw = get_citation_date(citation_doi, date_map)
+        if citation_date_raw:
+            try:
+                norm_iso_date = _norm_date_iso(str(citation_date_raw))
+                citation_date = get_realistic_date(norm_iso_date)
+            except (ValueError, TypeError):
+                citation_date = None
 
         rec = {
             "dataset_id": target_doi,
@@ -320,21 +331,13 @@ def datacite_citations_block_to_records_optimized(
             "citation_link": _norm_doi_url(citation_doi),
         }
 
-        # 1. Check the pre-fetched batch from DuckDB
-        citation_date = prefetched_dates.get(citation_doi)
-
-        # 2. Fallback if not found in the batch
-        if not citation_date:
-            try:
-                citation_date = best_publication_date_for_doi(citation_doi)
-            except Exception as e:
-                print(f"\n[!] Error fetching date for {citation_doi}: {e}")
-                citation_date = None
-
         if citation_date:
             rec["citation_date"] = citation_date
+            # Ensure citation_weight handles these dates
+            rec["citation_weight"] = citation_weight(dataset_pub_date, citation_date)
+        else:
+            rec["citation_weight"] = 1.0
 
-        rec["citation_weight"] = citation_weight(dataset_pub_date, citation_date)
         results.append(rec)
 
     # For other identifiers we cannot get a citation_date
@@ -352,5 +355,4 @@ def datacite_citations_block_to_records_optimized(
                 "citation_weight": 1.0,
             }
         )
-
-    return results
+    return dedupe_citations_by_link(results)
