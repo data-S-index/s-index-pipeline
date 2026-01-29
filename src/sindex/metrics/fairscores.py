@@ -1,4 +1,66 @@
+import glob
+import os
+import sys
+
 import orjson
+
+
+def merge_doi_fair_scores_ndjson_files(input_folder: str, output_file: str):
+    """
+    Merges all *.ndjson files found inside the input_folder and
+    renames 'doi' to 'dataset_id'
+    """
+    search_pattern = os.path.join(input_folder, "*.ndjson")
+    files = glob.glob(search_pattern)
+
+    files = [
+        f
+        for f in files
+        if os.path.isfile(f) and os.path.abspath(f) != os.path.abspath(output_file)
+    ]
+
+    if not files:
+        print(f"No .ndjson files found in folder: {input_folder}")
+        return
+
+    total_lines = 0
+    print(f"Found {len(files)} files. Starting merge with orjson...")
+
+    # Open output in Binary Write mode ("wb")
+    with open(output_file, "wb") as outfile:
+        for fname in files:
+            try:
+                # Open input in Binary Read mode ("rb")
+                with open(fname, "rb") as infile:
+                    for line in infile:
+                        line = line.strip()
+                        if not line:
+                            continue
+
+                        try:
+                            # 1. Parse bytes
+                            data = orjson.loads(line)
+
+                            # 2. Rename the key
+                            if "doi" in data:
+                                data["dataset_id"] = data.pop("doi")
+
+                            # 3. Dump back to bytes and add a byte-newline
+                            outfile.write(orjson.dumps(data) + b"\n")
+
+                            total_lines += 1
+
+                            if total_lines % 100000 == 0:
+                                sys.stdout.write(f"\rProcessed lines: {total_lines:,}")
+                                sys.stdout.flush()
+
+                        except orjson.JSONDecodeError:
+                            print(f"\nWarning: Skipped invalid JSON line in {fname}")
+
+            except PermissionError:
+                print(f"\nSkipping {fname} (Permission Denied)")
+
+    print(f"\rDone! Total lines in '{output_file}': {total_lines:,}    ")
 
 
 def extrapolate_emdb_fair_scores(emdb_file_path, scores_file_path, output_file_path):
