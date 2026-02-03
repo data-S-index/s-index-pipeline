@@ -524,7 +524,21 @@ def create_dataset_metrics_table(db_path):
             COALESCE(mn.total_mentions, 0) as total_mentions,
             COALESCE(mn.total_men_weight, 0.0) as total_men_weight,
             COALESCE(mn.men_3yr, 0) as men_3yr,
-            COALESCE(mn.men_weight_3yr, 0.0) as men_weight_3yr
+            COALESCE(mn.men_weight_3yr, 0.0) as men_weight_3yr,
+
+            (1.0/3.0) * (
+                (COALESCE(f.score, 0) / 100.0) + 
+                COALESCE(c.total_cit_weight, 0.0) + 
+                COALESCE(mn.total_men_weight, 0.0)
+            ) AS raw_dataset_index,
+
+            (1.0/3.0) * (
+                (COALESCE(f.score, 0) / 100.0) + 
+                COALESCE(c.cit_weight_3yr, 0.0) + 
+                COALESCE(mn.men_weight_3yr, 0.0)
+            ) AS raw_dataset_index_3yr,
+
+
             
         FROM metadata m
         LEFT JOIN cit_stats c ON m.dataset_id = c.dataset_id
@@ -547,6 +561,146 @@ def create_dataset_metrics_table(db_path):
             WHERE creators IS NOT NULL
             LIMIT 5
         """).df()
+        )
+
+
+def calculate_normalization_factors_subfields_rawDindex(db_path, limit=None):
+    """
+    Create table with normalization factors for 'raw_dataset_index_3yr'.
+
+    Logic:
+    For a Target Year Y, the benchmark is calculated using the median of datasets
+    published in Y-3.
+    """
+    print("Creating normalization_factors_subfields_rawDindex table")
+
+    with duckdb.connect(db_path) as con:
+        # 1. Fetch data
+        # Ensure 'raw_dataset_index_3yr' exists in your dataset_metrics table
+        query = """
+            SELECT subfield_id, subfield_name, pubyear, raw_dataset_index_3yr
+            FROM dataset_metrics
+            WHERE pubyear IS NOT NULL 
+        """
+        if limit:
+            print(f" TESTING MODE: Sampling {limit} random datasets")
+            query += f" USING SAMPLE {limit}"
+
+        df = con.execute(query).df()
+
+    if df.empty:
+        print("No data found. Skipping.")
+        return
+
+    # Ensure IDs are strings and handle missing names
+    df["subfield_id"] = df["subfield_id"].astype(str)
+    df["subfield_name"] = df["subfield_name"].fillna("Unknown")
+
+    results = []
+
+    # Helper function for median calculation
+    def get_stats(subset, s_id, s_name, target_year_val):
+        # We drop NaNs to ensure the median is valid
+        r = subset["raw_dataset_index_3yr"].dropna()
+
+        return {
+            "subfield_id": s_id,
+            "subfield_name": s_name,
+            "pubyear": target_year_val,  # This is the year Y (the target year)
+            "median_raw_Dindex": float(r.median()) if not r.empty else None,
+            "n_count": int(len(r)),  # Number of datasets used for this median
+        }
+
+    # 1. Global & Subfield Benchmarks (All-time aggregations)
+    # Note: These calculate the median of ALL valid years available in the DB
+    print("Generating All-time Benchmarks...")
+    results.append(get_stats(df, None, None, None))  # Global All-time
+
+    for (sub_id, sub_name), group in df.groupby(["subfield_id", "subfield_name"]):
+        results.append(get_stats(group, sub_id, sub_name, None))  # Subfield All-time
+
+    # 2. Yearly Benchmarks (The Y-3 Logic)
+    min_data_year = int(df["pubyear"].min())
+    max_data_year = int(df["pubyear"].max())
+
+    # We can only generate benchmarks for Year Y if we have data for Y-3.
+    # So the Target Years start at min_data_year + 3
+    start_target_year = min_data_year + 3
+    end_target_year = max_data_year
+
+    print(
+        f"Generating yearly benchmarks for Target Years {start_target_year} to {end_target_year}..."
+    )
+
+    # Loop through the TARGET years (Y)
+    for target_year in range(start_target_year, end_target_year + 1):
+        source_year = target_year - 3
+
+        # A. Global Yearly (all subfields combined)
+        # Filter for data from Y-3 only
+        mask_all = df["pubyear"] == source_year
+        r_all = df.loc[mask_all, "raw_dataset_index_3yr"].dropna()
+
+        results.append(
+            {
+                "subfield_id": None,
+                "subfield_name": None,
+                "pubyear": int(target_year),
+                "median_raw_Dindex": float(r_all.median()) if not r_all.empty else None,
+                "n_count": int(len(r_all)),
+            }
+        )
+
+        # B. Subfield-Yearly (specific subfield)
+        # Filter for data from Y-3 only within subfields
+        # Optimization: Filter df first by year to speed up groupby
+        df_year_subset = df[df["pubyear"] == source_year]
+
+        if not df_year_subset.empty:
+            for (sub_id, sub_name), group in df_year_subset.groupby(
+                ["subfield_id", "subfield_name"]
+            ):
+                results.append(get_stats(group, sub_id, sub_name, int(target_year)))
+
+    # 3. Save to DuckDB
+    df_norm = pd.DataFrame(results)
+
+    # Fix types for DuckDB
+    df_norm["subfield_id"] = df_norm["subfield_id"].astype("object")
+    df_norm["subfield_name"] = df_norm["subfield_name"].astype("object")
+
+    print(f"Saving {len(df_norm)} benchmark rows...")
+
+    with duckdb.connect(db_path) as con:
+        con.execute("DROP TABLE IF EXISTS normalization_factors_subfields_rawDindex")
+
+        con.execute("""
+            CREATE TABLE normalization_factors_subfields_rawDindex (
+                subfield_id VARCHAR, 
+                subfield_name VARCHAR,
+                pubyear INTEGER,
+                median_raw_Dindex DOUBLE, 
+                n_count INTEGER
+            )
+        """)
+
+        con.register("df_view", df_norm)
+        con.execute(
+            "INSERT INTO normalization_factors_subfields_rawDindex SELECT * FROM df_view"
+        )
+        con.unregister("df_view")
+
+        print("normalization_factors_subfields_rawDindex table created.")
+
+        print("\n-Preview (Top 5 Yearly Benchmarks) ---")
+        print(
+            con.execute("""
+                SELECT subfield_name, pubyear as target_year, median_raw_Dindex, n_count 
+                FROM normalization_factors_subfields_rawDindex 
+                WHERE pubyear IS NOT NULL
+                ORDER BY n_count DESC 
+                LIMIT 5
+            """).df()
         )
 
 
