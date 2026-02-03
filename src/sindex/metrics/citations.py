@@ -190,13 +190,16 @@ def merge_citations_from_files_fast(
 
                 rec = orjson.loads(line)
 
-                # Use .get() safely in case dataset_id or link are missing in a line
                 did = rec.get("dataset_id")
                 lnk = rec.get("citation_link")
                 if not did or not lnk:
                     continue
+                lnk_clean = (
+                    str(lnk).split("#")[0].rstrip("/").strip()
+                )  # some MDC links have # at the end we need them removed for proper comparison
+                rec["citation_link"] = lnk_clean
 
-                key = (did, lnk)
+                key = (did, lnk_clean)
 
                 # Source handling
                 src = rec.get("source") or []
@@ -223,7 +226,7 @@ def merge_citations_from_files_fast(
         f"\rFinished processing {total_in:,} records. Unique: {len(merged):,}\n"
     )
 
-    # Final Write
+    # Write
     if not merged:
         print("No records found to write.")
         return
@@ -240,6 +243,7 @@ def merge_citations_from_files_fast(
 def combine_citations(input_paths, output_path):
     """
     Combines multiple .ndjson files with a progress counter that overwrites itself.
+    Used to combine citation to DOIs and EMDB
     """
     current_now = datetime.now().isoformat()
     processed_count = 0

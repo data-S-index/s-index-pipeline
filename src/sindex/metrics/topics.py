@@ -1,4 +1,5 @@
 import csv
+import glob
 import json
 import os
 
@@ -95,3 +96,55 @@ def enhance_topics(ndjson_path, csv_path, output_path, limit=None):
     print(f"Total lines: {count:,}")
     print(f"Total matches: {matches:,}")
     print(f"Saved to: {output_path}")
+
+
+def restructure_topics_ndjson(input_folder, output_file):
+    file_pattern = os.path.join(input_folder, "*.ndjson")
+    files = glob.glob(file_pattern)
+    total_files = len(files)
+    total_lines = 0
+    with open(output_file, "w", encoding="utf-8") as f_out:
+        for index, file_path in enumerate(files, start=1):
+            print(
+                f"\rProcessing: {index} out of {total_files} files...",
+                end="",
+                flush=True,
+            )
+            with open(file_path, "r", encoding="utf-8") as f_in:
+                for line in f_in:
+                    if not line.strip():
+                        continue
+
+                    data = json.loads(line)
+
+                    topic = data.get("topic") or {}
+                    subfield = data.get("subfield") or {}
+                    field = data.get("field") or {}
+                    domain = data.get("domain") or {}
+
+                    restructured = {
+                        "dataset_id": data.get("dataset_id"),
+                        "topic_id": f"T{topic.get('id')}" if topic.get("id") else None,
+                        "topic_name": topic.get("name"),
+                        "score": topic.get("score"),
+                        "source": "custom_model",
+                        "subfield_id": str(subfield.get("id"))
+                        if subfield.get("id")
+                        else None,
+                        "subfield_name": subfield.get("name"),
+                        "field_id": str(field.get("id")) if field.get("id") else None,
+                        "field_name": field.get("name"),
+                        "domain_id": str(domain.get("id"))
+                        if domain.get("id")
+                        else None,
+                        "domain_name": domain.get("name"),
+                        "keywords": None,
+                        "summary": None,
+                        "wikipedia_url": None,
+                    }
+
+                    f_out.write(json.dumps(restructured) + "\n")
+                    total_lines += 1
+    print("\nProcessing complete")
+    print(f"Total files processed: {total_files}")
+    print(f"Total lines in output: {total_lines:,}")

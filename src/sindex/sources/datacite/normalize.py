@@ -97,6 +97,7 @@ def slim_datacite_record(metadata: dict) -> dict:
     if publisher:
         out["publisher"] = publisher
 
+    ## Dates
     # Publication date
     publication_date = get_best_publication_date_datacite_record(attr)
     if publication_date:
@@ -111,6 +112,7 @@ def slim_datacite_record(metadata: dict) -> dict:
             out["created_date"] = _norm_date_iso(created)
         except ValueError:
             pass  # skip if issue during normalization
+    ##
 
     # Creators
     creators_slim = []
