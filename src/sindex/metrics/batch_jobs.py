@@ -388,63 +388,56 @@ def create_fair_scores_table(db_path, input_path):
         print(con.execute("SELECT * FROM fair_scores LIMIT 5").df())
 
 
-def create_topics_table(db_path, input_path):
-    """
-    Loads topics ndjson into DuckDB
-    """
-    # Determine input files
-    sources_sql = _get_file_sources(input_path)
+def create_topics_table(db_path):
+    con = duckdb.connect(db_path)
+    con.execute("PRAGMA enable_progress_bar;")
 
-    # Schema
-    schema = {
-        "dataset_id": "VARCHAR",
-        "topic_id": "VARCHAR",
-        "topic_name": "VARCHAR",
-        "score": "DOUBLE",
-        "source": "VARCHAR",
-        "subfield_id": "VARCHAR",
-        "subfield_name": "VARCHAR",
-        "field_id": "VARCHAR",
-        "field_name": "VARCHAR",
-        "domain_id": "VARCHAR",
-        "domain_name": "VARCHAR",
-    }
+    print("Creating final 'topics' table with score comparison logic")
+    start_time = time.time()
 
-    print(f"Loading Topics from: {input_path}")
-    with duckdb.connect(db_path) as con:
-        con.execute("PRAGMA enable_progress_bar")
-
-        # Create table
-        query = f"""
-        CREATE OR REPLACE TABLE topics AS 
+    # We use a CREATE TABLE AS SELECT (CTAS) statement
+    con.execute("""
+        CREATE OR REPLACE TABLE topics AS
         SELECT 
-            dataset_id, 
-            topic_id,
-            topic_name, 
-            score,
-            source,
-            subfield_id,
-            subfield_name,
-            field_id,
-            field_name,
-            domain_id,
-            domain_name
-        FROM read_json_auto(
-            {sources_sql}, 
-            columns={schema}, 
-            ignore_errors=true, 
-            union_by_name=true
-        )
-        """
+            m.dataset_id,
+            
+            -- Topic Info
+            CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN oa.topic_id ELSE custom.topic_id END AS topic_id,
+            CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN oa.topic_name ELSE custom.topic_name END AS topic_name,
+            CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN oa.score ELSE custom.score END AS score,
+            
+            -- Source Info
+            CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN 'openalex' ELSE 'custom_model' END AS source,
 
-        con.execute(query)
+            -- Hierarchy Info (Subfield, Field, Domain)
+            CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN oa.subfield_id ELSE custom.subfield_id END AS subfield_id,
+            CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN oa.subfield_name ELSE custom.subfield_name END AS subfield_name,
+            
+            CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN oa.field_id ELSE custom.field_id END AS field_id,
+            CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN oa.field_name ELSE custom.field_name END AS field_name,
+            
+            CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN oa.domain_id ELSE custom.domain_id END AS domain_id,
+            CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN oa.domain_name ELSE custom.domain_name END AS domain_name
 
-        # Verification
-        count = con.execute("SELECT COUNT(*) FROM topics").fetchone()[0]
-        print(f"Topics table created. Rows: {count:,}")
+        FROM metadata m
+        LEFT JOIN topics_oa oa ON m.dataset_id = oa.dataset_id
+        LEFT JOIN topics_custom_model custom ON m.dataset_id = custom.dataset_id
+        WHERE oa.dataset_id IS NOT NULL OR custom.dataset_id IS NOT NULL;
+    """)
 
-        print("\nPreview")
-        print(con.execute("SELECT * FROM topics LIMIT 5").df())
+    elapsed = time.time() - start_time
+    print(f"Table created in {elapsed:.2f} seconds.")
+
+    # Verification
+    final_count = con.execute("SELECT count(*) FROM topics").fetchone()[0]
+    print(f"Final 'topics' table contains {final_count:,} rows.")
+
+    print("\nSample of rows where Custom Model won:")
+    print(
+        con.execute(
+            "SELECT dataset_id, source, score FROM topics WHERE source='custom_model' LIMIT 5"
+        ).df()
+    )
 
 
 def create_dataset_metrics_table(db_path):
@@ -1084,7 +1077,7 @@ def create_creators_table(db_path, limit=None):
                     raw_ids_json->0->>'$.identifier',
                     raw_ids_json->0->>'$.value',
                     
-                    -- Attempt 3: Fallback to First Simple String (Fixed)
+                    -- Attempt 3: Fallback to First Simple String
                     -- Uses the arrow operator to extract text from the first array element
                     raw_ids_json->>0
                 ),
@@ -1323,12 +1316,11 @@ def create_s_index_name_affiliation_table(db_path, limit=None):
             print(e)
 
 
-def create_s_index_name_table(db_path, limit=None):
+def create_s_index_identifier_name_affiliation_table(db_path, limit=None):
     """
-    Create table with S-index of researchers regrouped based on matching Names
-    Note: Really slow, we could skip
+    Merge authors based on identifier only first, then based on name/affiliation pair
     """
-    print("Initializing S_index_name table")
+    print("Creating s_index_identifier_name_affiliation table")
     start_time = time.time()
 
     source_query = "SELECT * FROM creators_table"
@@ -1336,88 +1328,117 @@ def create_s_index_name_table(db_path, limit=None):
         source_query += f" LIMIT {limit}"
 
     with duckdb.connect(db_path) as con:
-        # Setting
-        con.execute("SET preserve_insertion_order=false")
-        con.execute("SET memory_limit='32GB'")
+        # Settings
+        con.execute("SET memory_limit='64GB'")
         con.execute("SET temp_directory='duckdb_tmp'")
+        con.execute("SET threads=8")
 
         query = f"""
-        CREATE OR REPLACE TABLE S_index_name AS
+        CREATE OR REPLACE TABLE s_index_identifier_name_affiliation AS
         WITH source_data AS (
             {source_query}
         ),
-        
-        -- STEP 1: Calculate Affiliation Counts
-        -- We unnest in the FROM clause, then count. 
-        -- This avoids holding giant lists in memory.
-        aff_stats AS (
+        cleaned_data AS (
             SELECT 
-                LOWER(TRIM(creator_name)) as grouping_name,
-                COUNT(DISTINCT x) as n_unique_affiliations
-            FROM source_data, UNNEST(affiliations::VARCHAR[]) as t(x)
-            WHERE creator_name IS NOT NULL
-            GROUP BY 1
+                *,
+                -- 1. SANITIZE TEXT (Hex Roundtrip)
+                TRY_CAST(from_hex(hex(creator_name)) AS VARCHAR) as safe_name_raw,
+                TRY_CAST(from_hex(hex(CAST(affiliations AS VARCHAR))) AS VARCHAR) as safe_affil_raw
+            FROM source_data
+        ),
+        parsed_affiliations AS (
+            SELECT 
+                *,
+                -- 2. ROBUST LIST PARSING
+                -- Instead of CAST(.. AS VARCHAR[]), we split by comma and clean up.
+                -- This handles '["MIT", "Harvard"]' and weird JSON escapes safely.
+                list_transform(
+                    string_split(COALESCE(safe_affil_raw, ''), ','), 
+                    x -> TRIM(regexp_replace(x, '[\\[\\]"''\\\\]', '', 'g'))
+                ) as affil_list_clean
+            FROM cleaned_data
+        ),
+        pre_processed AS (
+            SELECT 
+                *,
+                LOWER(TRIM(safe_name_raw)) as clean_name,
+                
+                -- Create Signature from the manually cleaned list
+                list_sort(
+                    list_transform(affil_list_clean, x -> LOWER(x))
+                )::VARCHAR as affil_signature
+            FROM parsed_affiliations
         )
-
-        -- STEP 2: Main Aggregation
         SELECT 
             -- 1. GROUPING KEY
-            LOWER(TRIM(m.creator_name)) as grouping_name,
+            COALESCE(
+                primary_identifier, 
+                clean_name || '_' || affil_signature
+            ) as distinct_group_id,
+
+            CASE 
+                WHEN primary_identifier IS NOT NULL THEN 'identifier'
+                ELSE 'name_affiliation'
+            END as grouping_method,
+
+            -- 2. IDENTITY
+            mode(safe_name_raw) as display_name,
+            max(primary_identifier) as primary_identifier, 
             
-            -- 2. CONTEXT
-            list_distinct(list(m.creator_name)) as name_variations,
             
-            -- Join the pre-calculated affiliation count
-            COALESCE(first(a.n_unique_affiliations), 0) as n_unique_affiliations,
-            
-            COUNT(DISTINCT m.primary_identifier) as n_associated_identifiers,
-            
-            mode(m.name_type) as name_type,
+            list_distinct(flatten(list(affil_list_clean))) as all_affiliations,
+            mode(name_type) as name_type,
 
             -- 3. DOMAIN
-            mode(m.topic_id) as primary_topic_id,
-            mode(m.topic_name) as primary_topic_name,
-            mode(m.subfield_id) as primary_subfield_id,
-            mode(m.subfield_name) as primary_subfield_name,
+            mode(topic_id) as primary_topic_id,
+            mode(topic_name) as primary_topic_name,
+            mode(subfield_id) as primary_subfield_id,
+            mode(subfield_name) as primary_subfield_name,
+
+            count(distinct topic_id) as n_unique_topics,
+            count(distinct subfield_id) as n_unique_subfields,
             
-            count(distinct m.topic_id) as n_unique_topics,
-            count(distinct m.subfield_id) as n_unique_subfields,
-            min(m.pubyear) as first_pub_year,
-            max(m.pubyear) as last_pub_year,
+            min(pubyear) as first_pub_year,
+            max(pubyear) as last_pub_year,
 
             -- 4. SCORES
             count(*) as n_datasets,
-            sum(m.dataset_index_topic) as S_index_topics,
-            sum(m.dataset_index_subfield) as S_index_subfield,
+            sum(dataset_index_topic) as S_index_topics,
+            sum(dataset_index_subfield) as S_index_subfield,
             
-            avg(m.dataset_index_topic) as avg_dataset_index_topics,
-            avg(m.dataset_index_subfield) as avg_dataset_index_subfield,
+            avg(dataset_index_topic) as avg_dataset_index_topics,
+            avg(dataset_index_subfield) as avg_dataset_index_subfield,
 
             -- 5. RAW METRICS
-            sum(m.total_cit_weight) as total_cit_weight,
-            sum(m.total_men_weight) as total_men_weight,
-            sum(m.total_citations) as sum_total_citations,
-            sum(m.total_mentions) as sum_total_mentions,
-            avg(m.fair_score) as avg_fair_score
+            sum(total_cit_weight) as total_cit_weight,
+            sum(total_men_weight) as total_men_weight,
+            sum(total_citations) as sum_total_citations,
+            sum(total_mentions) as sum_total_mentions,
+            avg(fair_score) as avg_fair_score
 
-        FROM source_data m
-        -- Join the stats table on the name
-        LEFT JOIN aff_stats a ON LOWER(TRIM(m.creator_name)) = a.grouping_name
-        WHERE m.creator_name IS NOT NULL
-        GROUP BY 1
+        FROM pre_processed
+        WHERE primary_identifier IS NOT NULL OR clean_name IS NOT NULL
+        
+        GROUP BY 1, 2
         ORDER BY S_index_topics DESC
         """
 
         try:
             con.execute(query)
 
-            row_count = con.execute("SELECT COUNT(*) FROM S_index_name").fetchone()[0]
-            end_time = time.time()
+            stats = con.execute("""
+                SELECT 
+                    COUNT(*) as total,
+                    COUNT(CASE WHEN grouping_method = 'identifier' THEN 1 END) as by_id,
+                    COUNT(CASE WHEN grouping_method = 'name_affiliation' THEN 1 END) as by_fallback
+                FROM s_index_identifier_name_affiliation
+            """).fetchone()
 
-            print("Success! 'S_index_name' created.")
-            print(f"Total unique names: {row_count:,}")
-            print(f"Execution time: {end_time - start_time:.2f} seconds")
+            end_time = time.time()
+            print(f"Success! Completed in {end_time - start_time:.2f} seconds.")
+            print(f"Total authors: {stats[0]:,}")
+            print(f"  > By Identifier: {stats[1]:,}")
+            print(f"  > By name & affiliation: {stats[2]:,}")
 
         except Exception as e:
-            print("\nError during execution:")
-            print(e)
+            print("\nError:", e)

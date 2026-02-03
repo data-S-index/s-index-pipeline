@@ -7,3 +7,5 @@ __pycache__/
 input/mdc/mdc_index.duckdb
 notebooks-batch/exported_dataset_ids.csv
 /notebooks-batch/duckdb_tmp
+notebooks-batch/output/huggingface/models_data_refs.ndjson
+notebooks-batch/output/huggingface/processed_history.txt
