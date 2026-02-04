@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sindex.core.dates import _norm_date_iso
+from sindex.core.dates import _norm_date_iso, is_realistic_integer_year
 from sindex.core.ids import _normalize_orcid
 
 
@@ -97,9 +97,19 @@ def slim_emdb_record(metadata: dict) -> dict:
         if keydates:
             created = keydates.get("deposition")
             try:
-                out["publication_date"] = _norm_date_iso(created)
-            except ValueError:
-                pass  # skip if not valid
+                norm_date = _norm_date_iso(created)
+                # keep for backward compatibility we rely on publication_year now
+                out["publication_date"] = norm_date
+
+                # Extract the year (first 4 chars) and convert to integer
+                if norm_date and len(norm_date) >= 4:
+                    year_str = norm_date[:4]
+                    y_int = int(year_str)
+                    if is_realistic_integer_year(y_int):
+                        out["pubyear"] = y_int
+
+            except (ValueError, TypeError):
+                pass
 
         # Creators
         creators_slim = []

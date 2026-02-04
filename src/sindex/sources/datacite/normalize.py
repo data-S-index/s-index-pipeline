@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from sindex.core.dates import _norm_date_iso, get_realistic_date
+from sindex.core.dates import (
+    _norm_date_iso,
+    get_realistic_date,
+    is_realistic_integer_year,
+)
 from sindex.core.ids import _norm_doi, _norm_doi_url
 from sindex.enrich.pubdate.jobs import best_publication_date_for_doi
 from sindex.metrics.dedup import dedupe_citations_by_link
 from sindex.metrics.weights import citation_weight
-
-from .utils import get_best_publication_date_datacite_record
 
 
 def slim_datacite_record(metadata: dict) -> dict:
@@ -98,20 +100,72 @@ def slim_datacite_record(metadata: dict) -> dict:
         out["publisher"] = publisher
 
     ## Dates
-    # Publication date
-    publication_date = get_best_publication_date_datacite_record(attr)
-    if publication_date:
-        out["publication_date"] = publication_date
-
-    # Created date
-    created = attr.get(
-        "created", ""
-    )  # This is the date DOI record was created on DataCite
-    if created:
+    # 1. DOI Created Date (from root attribute 'created')
+    doi_created_raw = attr.get("created")
+    if doi_created_raw:
         try:
-            out["created_date"] = _norm_date_iso(created)
+            out["doi_created_date"] = doi_created_raw
         except ValueError:
-            pass  # skip if issue during normalization
+            pass
+
+    # 2. Extract specific types from the 'dates' list
+    # Maps 'Issued' -> 'issued' and 'Created' -> 'created'
+    dates_list = attr.get("dates", [])
+    if isinstance(dates_list, list):
+        for d_obj in dates_list:
+            if not isinstance(d_obj, dict):
+                continue
+
+            d_type = d_obj.get("dateType")
+            d_val = d_obj.get("date")
+
+            if not d_val:
+                continue
+
+            if d_type == "Issued":
+                out["issued"] = d_val
+            elif d_type == "Created":
+                out["created"] = d_val
+
+    # 3. Published
+    published = attr.get("published")
+    if published:
+        out["published"] = str(published)
+
+    # 4. Publication Year (integer usually)
+    pub_year_raw = attr.get("publicationYear")
+    if pub_year_raw:
+        out["publication_year"] = pub_year_raw
+
+    # 5. Derive 'pubyear' (Integer)
+    # Order of preference: publication_year, published, created, doi_created_date, issued
+    priority_keys = [
+        "publication_year",
+        "published",
+        "doi_created_date",
+        "created",
+        "issued",
+    ]
+
+    for key in priority_keys:
+        val = out.get(key)
+        if not val:
+            continue
+
+        try:
+            # Extract first 4 digits
+            y_int = int(str(val).strip()[:4])
+
+            # Check range
+            if is_realistic_integer_year(y_int):
+                out["pubyear"] = y_int
+                break  # Found a valid year, stop looking
+        except (ValueError, TypeError, IndexError):
+            continue  # Parse failed, try next candidate
+
+    # 6. Keeping published_date for backward compatibility
+    if "pubyear" in out:
+        out["publication_date"] = _norm_date_iso(str(out["pubyear"]))
     ##
 
     # Creators

@@ -9,9 +9,16 @@ from concurrent.futures import ProcessPoolExecutor
 import duckdb
 import pandas as pd
 
-from sindex.core.dates import _norm_date_iso, get_best_dataset_date, get_realistic_date
+from sindex.core.dates import (
+    _DEFAULT_CIT_MEN_DATE,
+    _DEFAULT_CIT_MEN_YEAR,
+    _norm_date_iso,
+    get_best_dataset_date,
+    get_realistic_date,
+    is_realistic_integer_year,
+)
 from sindex.core.ids import _norm_doi
-from sindex.metrics.weights import citation_weight
+from sindex.metrics.weights import citation_weight, citation_weight_year
 
 
 def shorten_id(url):
@@ -384,6 +391,128 @@ def process_openalex_citations_for_datasets(
     con.close()
 
 
+def process_openalex_citations_for_datasets_year(
+    db_path,
+    dataset_db_path,
+    cite_folder,
+    meta_folder,
+    mem_limit="32GB",
+    temp_dir=None,
+    reset_tables=True,
+):
+    """
+    Creates 'my_datasets_citations_year' table by linking citations Parquets.
+    Links cited items to their original metadata and computes citation_year.
+    """
+    start_time = time.time()
+    con = duckdb.connect(db_path)
+
+    # Register the Python function as a DuckDB UDF
+    try:
+        con.execute("DROP FUNCTION get_best_date")
+    except duckdb.CatalogException:
+        pass
+
+    con.create_function("get_best_date", get_best_dataset_date)
+
+    # Attach the external database
+    con.execute(f"ATTACH '{dataset_db_path}' AS dataset_db (READ_ONLY)")
+
+    # Configuration
+    con.execute(f"SET memory_limit = '{mem_limit}';")
+    con.execute("SET enable_progress_bar = false;")
+    if temp_dir:
+        os.makedirs(temp_dir, exist_ok=True)
+        clean_temp_path = temp_dir.replace("\\", "/")
+        con.execute(f"SET temp_directory = '{clean_temp_path}';")
+
+    # Optional Table Cleanup
+    if reset_tables:
+        print("Resetting tables: dropping existing citation progress and data...")
+        con.execute("DROP TABLE IF EXISTS processed_cite_files")
+        con.execute("DROP TABLE IF EXISTS intermediate_links")
+        con.execute("DROP TABLE IF EXISTS my_datasets_citations_year")
+
+    # Initialize Tracking Tables
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS processed_cite_files (filename VARCHAR PRIMARY KEY)"
+    )
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS intermediate_links (
+            citing_oa_id VARCHAR, 
+            cited_oa_id VARCHAR, 
+            cited_doi VARCHAR
+        )
+    """)
+
+    # Step 1: Finding citations
+    cite_files = sorted(glob.glob(os.path.join(cite_folder, "*.parquet")))
+    done_cite = {
+        row[0]
+        for row in con.execute("SELECT filename FROM processed_cite_files").fetchall()
+    }
+    to_process = [f for f in cite_files if f not in done_cite]
+
+    if to_process:
+        print(f"Step 1: Finding citations in {len(to_process)} files")
+        for i, file_path in enumerate(to_process, 1):
+            clean_path = file_path.replace("\\", "/")
+            con.execute("BEGIN TRANSACTION")
+            try:
+                con.execute(f"""
+                    INSERT INTO intermediate_links
+                    SELECT c.citing_oa_id, c.cited_oa_id, d.doi
+                    FROM read_parquet('{clean_path}') c
+                    INNER JOIN my_datasets_topics d ON c.cited_oa_id = d.oa_id
+                """)
+                con.execute("INSERT INTO processed_cite_files VALUES (?)", [file_path])
+                con.execute("COMMIT")
+            except Exception as e:
+                con.execute("ROLLBACK")
+                print(f"\n[!] Error on {file_path}: {e}")
+                break
+
+            elapsed = time.time() - start_time
+            print(
+                f"\r > Progress: {len(done_cite) + i}/{len(cite_files)} | Elapsed: {time.strftime('%M:%S', time.gmtime(elapsed))}",
+                end="",
+                flush=True,
+            )
+
+    # Step 2: Mapping citing IDs and joining external dates
+    print("\n\nStep 2: Mapping citing IDs")
+    meta_glob = os.path.join(meta_folder, "*.parquet").replace("\\", "/")
+
+    # Join with external dataset_db.my_datasets using created_date
+    con.execute(f"""
+        CREATE OR REPLACE TABLE my_datasets_citations_year AS
+        SELECT 
+            il.cited_doi, 
+            il.cited_oa_id, 
+            il.citing_oa_id,
+            m.doi as citing_doi, 
+            m.pub_date as citation_date,
+            YEAR(TRY_CAST(m.pub_date AS DATE)) as citation_year,
+            t.pubyear
+        FROM intermediate_links il
+        LEFT JOIN read_parquet('{meta_glob}') m ON il.citing_oa_id = m.oa_id
+        LEFT JOIN dataset_db.my_datasets t ON il.cited_doi = t.dataset_id
+    """)
+
+    con.execute("DROP TABLE IF EXISTS intermediate_links")
+    con.execute("DETACH dataset_db")
+
+    total_min = (time.time() - start_time) / 60
+    final_count = con.execute(
+        "SELECT count(*) FROM my_datasets_citations_year"
+    ).fetchone()[0]
+    print(
+        f"Done! Final citation count: {final_count:,} | Total Time: {total_min:.2f} min"
+    )
+    con.close()
+
+
 def export_citations_to_ndjson(db_path, out_ndjson, batch_size=100000):
     """
     Streams data from my_datasets_citations to an NDJSON file,
@@ -453,6 +582,100 @@ def export_citations_to_ndjson(db_path, out_ndjson, batch_size=100000):
 
                 if citation_date:
                     rec["citation_date"] = citation_date
+
+                f_out.write(json.dumps(rec) + "\n")
+                count += 1
+
+            # Final progress update for the batch
+            elapsed = time.time() - start_time
+            print(
+                f"\rProcessed: {count:,} | Elapsed: {elapsed:.2f}s", end="", flush=True
+            )
+
+    print(f"\nComplete. Total citation records: {count:,}")
+    con.close()
+
+
+def export_citations_to_ndjson_year(db_path, out_ndjson, batch_size=100000):
+    """
+    Streams data from my_datasets_citations_year to an NDJSON file,
+    calculating citation weights using pubyear and citation_year
+    """
+    start_time = time.time()
+    con = duckdb.connect(db_path)
+    con.execute("SET enable_progress_bar = false;")
+
+    # Updated SELECT to include citing_oa_id for the fallback link
+    results = con.execute("""
+        SELECT 
+            cited_doi,
+            pubyear,
+            citing_doi,
+            citing_oa_id,
+            citation_year,
+            citation_date
+        FROM my_datasets_citations_year
+    """)
+
+    count = 0
+    print(f"Starting export to {out_ndjson}")
+
+    with open(out_ndjson, "w", encoding="utf-8") as f_out:
+        while True:
+            chunk = results.fetchmany(batch_size)
+            if not chunk:
+                break
+
+            for row in chunk:
+                cited_doi, pubyear, citing_doi, citing_oa_id, c_year, c_date_raw = row
+                dataset_pubyear = pubyear
+
+                citation_date = None
+                if c_date_raw:
+                    try:
+                        norm_iso_date = _norm_date_iso(str(c_date_raw))
+                        citation_date = get_realistic_date(norm_iso_date)
+                    except (ValueError, TypeError):
+                        citation_date = None
+
+                citation_year = None
+                if is_realistic_integer_year(c_year):
+                    citation_year = c_year
+
+                # Citation link
+                if citing_doi:
+                    # Prefix DOI with https://doi.org/
+                    citation_link = f"https://doi.org/{citing_doi}"
+                else:
+                    # Fallback to OpenAlex ID with https://openalex.org/
+                    link_id = str(citing_oa_id).split("/")[
+                        -1
+                    ]  # Gets just the ID part if it's a full URL
+                    citation_link = f"https://openalex.org/{link_id}"
+
+                # Construct the JSON record
+                rec = {
+                    "dataset_id": cited_doi,
+                    "source": ["openalex"],
+                    "citation_link": citation_link,
+                    "citation_weight": citation_weight_year(
+                        dataset_pubyear, citation_year
+                    ),
+                }
+
+                if citation_date:
+                    rec["citation_date"] = citation_date
+                    rec["placeholder_date"] = False
+                else:
+                    rec["citation_date"] = _DEFAULT_CIT_MEN_DATE
+                    rec["placeholder_date"] = True
+
+                if citation_year:
+                    rec["citation_year"] = citation_year
+                    rec["placeholder_year"] = False
+                else:
+                    rec["citation_year"] = _DEFAULT_CIT_MEN_YEAR
+                    rec["placeholder_year"] = True
 
                 f_out.write(json.dumps(rec) + "\n")
                 count += 1

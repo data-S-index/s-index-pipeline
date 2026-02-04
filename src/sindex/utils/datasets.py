@@ -29,33 +29,25 @@ def create_datasets_db_from_ndjson(slim_folder: str, output_db_path: str):
                 (SELECT x FROM unnest(identifiers) AS t(x) 
                  WHERE x.identifier_type = 'doi' LIMIT 1) as doi_struct,
                 identifiers[1] as first_struct,
-                publication_date,
-                created_date
+                pubyear
             FROM read_json_auto(?, 
                 ignore_errors=True, 
                 columns={
                     'identifiers': 'STRUCT(identifier_type VARCHAR, identifier VARCHAR)[]',
-                    'publication_date': 'VARCHAR',
-                    'created_date': 'VARCHAR'
+                    'pubyear': 'INTEGER',
                 }
             )
         ),
         prioritized AS (
             SELECT 
                 COALESCE(doi_struct, first_struct) as best_struct,
-                publication_date,
-                created_date
+                pubyear
             FROM extracted_ids
         )
         SELECT 
             best_struct.identifier AS dataset_id,
             best_struct.identifier_type AS id_type,
-            publication_date,
-            created_date,
-            COALESCE(
-                regexp_extract(publication_date, '(\d{4})'), 
-                regexp_extract(created_date, '(\d{4})')
-            ) AS publication_year
+            pubyear
         FROM prioritized
         WHERE dataset_id IS NOT NULL;
         """

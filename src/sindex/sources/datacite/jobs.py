@@ -6,6 +6,7 @@ import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import date, timedelta
+from multiprocessing import Pool
 from pathlib import Path
 from typing import Dict, Iterable, List
 
@@ -18,11 +19,11 @@ from sindex.core.dates import _parse_date_strict, get_best_dataset_date
 from sindex.core.http import make_session
 from sindex.core.ids import _norm_doi
 from sindex.core.io import _iter_json_lines
-from sindex.sources.datacite.discovery import (
+
+from .discovery import (
     get_datacite_doi_record,
     stream_datacite_records,
 )
-
 from .normalize import (
     datacite_citations_block_to_records,
     datacite_citations_block_to_records_optimized,
@@ -384,7 +385,6 @@ def _worker_process_file(args):
                 try:
                     rec = orjson.loads(line)
                     r += 1
-
                     slim = slim_datacite_record(rec)
                     f_out.write(orjson.dumps(slim) + b"\n")
                     k += 1
@@ -490,6 +490,141 @@ def find_citations_dc_from_citation_block(
         citations=citations,
         dataset_pub_date=dataset_pub_date,
     )
+
+
+# ---------------------------------------------------------
+# SLIM FASTEST
+def _worker_process_batch(lines):
+    """
+    Receives a list of raw JSON strings.
+    Returns a list of processed bytes (ready to write) and stats.
+    """
+    output_lines = []
+    stats = {"read": 0, "kept": 0, "bad": 0}
+
+    for line in lines:
+        # Skip empty whitespace
+        if not line.strip():
+            continue
+
+        try:
+            # 1. Parse
+            rec = orjson.loads(line)
+            stats["read"] += 1
+
+            # 2. Transform
+            slim = slim_datacite_record(rec)
+
+            # 3. Serialize immediately (bytes)
+            # Adding \n here ensures the writer just has to dump bytes
+            output_lines.append(orjson.dumps(slim) + b"\n")
+            stats["kept"] += 1
+
+        except Exception:
+            stats["bad"] += 1
+
+    return output_lines, stats
+
+
+def _stream_lines_from_files(files, batch_size):
+    """
+    Yields batches (lists) of lines from a list of file paths.
+    Handles opening/closing files automatically.
+    """
+    batch = []
+    for filepath in files:
+        is_gz = filepath.suffix == ".gz"
+        open_func = gzip.open if is_gz else open
+
+        try:
+            with open_func(filepath, "rb") as f:
+                for line in f:
+                    batch.append(line)
+                    if len(batch) >= batch_size:
+                        yield batch
+                        batch = []
+        except Exception as e:
+            print(f"\n[Warning] Could not read file {filepath.name}: {e}")
+
+    # Yield the leftovers
+    if batch:
+        yield batch
+
+
+def batch_slim_datacite_chunked(
+    src_folder: str,
+    dst_folder: str,
+    batch_size: int = 100_000,
+    workers: int = os.cpu_count(),
+) -> dict:
+    src, dst = Path(src_folder), Path(dst_folder)
+    dst.mkdir(parents=True, exist_ok=True)
+
+    # 1. Gather all files
+    all_files = sorted(list(src.glob("*.ndjson")) + list(src.glob("*.ndjson.gz")))
+
+    if not all_files:
+        print("No files found.")
+        return {}
+
+    print(f"Found {len(all_files)} input files.")
+    print(f"Starting processing with {workers} cores. Batch size: {batch_size:,}...")
+
+    t0 = time.time()
+    total_read = 0
+    total_kept = 0
+    total_bad = 0
+    batch_idx = 0
+
+    # 2. Start Worker Pool
+    # We use imap_unordered so we can process results as soon as *any* worker finishes
+    with Pool(workers) as pool:
+        # Create the generator that feeds the pool
+        line_generator = _stream_lines_from_files(all_files, batch_size)
+
+        # Map workers to the generator
+        for result_lines, stats in pool.imap_unordered(
+            _worker_process_batch, line_generator
+        ):
+            # Update totals
+            total_read += stats["read"]
+            total_kept += stats["kept"]
+            total_bad += stats["bad"]
+
+            # Write this batch to a new file (slim-0.ndjson.gz, slim-1.ndjson.gz, etc)
+            # Using fast compression (compresslevel=1)
+            out_name = f"slim-{batch_idx}.ndjson"
+            out_path = dst / out_name
+
+            with open(out_path, "wb") as f_out:
+                f_out.writelines(result_lines)
+
+            batch_idx += 1
+
+            # Live Progress Update
+            print(
+                f"\rProcessed: {total_read:,} lines | Batches: {batch_idx} | Bad: {total_bad}",
+                end="",
+                flush=True,
+            )
+
+    # Final stats
+    dt = time.time() - t0
+    rate = int(total_kept / dt) if dt > 0 else 0
+    print()  # Newline after progress bar
+
+    print("-" * 50)
+    print(f"DONE in {dt:.2f}s")
+    print(f"Total Lines Read: {total_read:,}")
+    print(f"Total Lines Kept: {total_kept:,}")
+    print(f"Processing Rate:  {rate:,} records/sec")
+    print(f"Output Files:     {batch_idx} files written to {dst}")
+    print("-" * 50)
+
+    return {"read": total_read, "kept": total_kept, "bad": total_bad, "time": dt}
+
+
+# --------------------
 
 
 def batch_find_citations_dc_from_citation_block(

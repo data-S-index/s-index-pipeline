@@ -2,7 +2,6 @@ import csv
 import glob
 import json  # Standard json for writing final files
 import os
-import shutil
 import sys
 import time
 from collections import Counter
@@ -16,30 +15,26 @@ except ImportError:
     print("orjson not found. Using standard json (slower).")
 
 
-def process_file(filepath, temp_dir):
+def process_file(filepath):
     """
     Worker function to process a single file.
-    Writes 'none' records to a temp file unique to this worker.
+    Extracts years from: 'pubyear', 'publication_year', 'published', and 'doi_created_date'.
     """
-    # Unique ID for this worker's temp file (using filename hash)
-    worker_id = abs(hash(filepath))
-    none_filename = os.path.join(temp_dir, f"none_part_{worker_id}.ndjson")
-
     local_stats = {
         "total_records": 0,
-        "has_created_date": 0,
-        "has_publication_date": 0,
-        # New Combination Counters
-        "count_none": 0,
-        "count_both": 0,
-        "count_just_created": 0,
-        "count_just_pub": 0,
+        
+        # Presence Counts
+        "count_has_pubyear": 0,
+        "count_has_publication_year": 0,
+        "count_has_published": 0,
+        "count_has_doi_created_date": 0,
+        
         # Year Distributions
-        "created_years": Counter(),
-        "pub_years": Counter(),
+        "pubyear_years": Counter(),
+        "publication_year_years": Counter(),
+        "published_years": Counter(),
+        "doi_created_date_years": Counter(),
     }
-
-    none_records_buffer = []
 
     try:
         with open(filepath, "rb") as f:
@@ -48,7 +43,7 @@ def process_file(filepath, temp_dir):
                     continue
 
                 try:
-                    # READ (Speed: orjson)
+                    # READ (Speed: orjson if available)
                     if orjson:
                         record = orjson.loads(line)
                     else:
@@ -56,50 +51,46 @@ def process_file(filepath, temp_dir):
 
                     local_stats["total_records"] += 1
 
-                    # Extract Dates
-                    c_date = record.get("created_date")
-                    p_date = record.get("publication_date")
+                    # --- 1. pubyear ---
+                    # Logic: Integer or 4-digit string
+                    val = record.get("pubyear")
+                    if val:
+                        local_stats["count_has_pubyear"] += 1
+                        val_str = str(val).strip()
+                        if val_str.isdigit() and len(val_str) == 4:
+                            local_stats["pubyear_years"][val_str] += 1
 
-                    has_c = bool(c_date)
-                    has_p = bool(p_date)
+                    # --- 2. publication_year ---
+                    # Logic: Integer or 4-digit string
+                    val = record.get("publication_year")
+                    if val:
+                        local_stats["count_has_publication_year"] += 1
+                        val_str = str(val).strip()
+                        if val_str.isdigit() and len(val_str) == 4:
+                            local_stats["publication_year_years"][val_str] += 1
 
-                    # Update Basic Counts
-                    if has_c:
-                        local_stats["has_created_date"] += 1
-                    if has_p:
-                        local_stats["has_publication_date"] += 1
+                    # --- 3. published ---
+                    # Logic: ISO string, extract first 4 chars
+                    val = record.get("published")
+                    if val:
+                        local_stats["count_has_published"] += 1
+                        if isinstance(val, str) and len(val) >= 4:
+                            year = val[:4]
+                            if year.isdigit():
+                                local_stats["published_years"][year] += 1
 
-                    # Update Combination Counts
-                    if has_c and has_p:
-                        local_stats["count_both"] += 1
-                    elif has_c and not has_p:
-                        local_stats["count_just_created"] += 1
-                    elif not has_c and has_p:
-                        local_stats["count_just_pub"] += 1
-                    else:
-                        local_stats["count_none"] += 1
-                        # Save 'none' record to buffer
-                        none_records_buffer.append(line.strip())
-
-                    # Year Extraction (Optimized String Slicing)
-                    if has_c and isinstance(c_date, str) and len(c_date) >= 4:
-                        year = c_date[:4]
-                        if year.isdigit():
-                            local_stats["created_years"][year] += 1
-
-                    if has_p and isinstance(p_date, str) and len(p_date) >= 4:
-                        year = p_date[:4]
-                        if year.isdigit():
-                            local_stats["pub_years"][year] += 1
+                    # --- 4. doi_created_date ---
+                    # Logic: ISO string, extract first 4 chars
+                    val = record.get("doi_created_date")
+                    if val:
+                        local_stats["count_has_doi_created_date"] += 1
+                        if isinstance(val, str) and len(val) >= 4:
+                            year = val[:4]
+                            if year.isdigit():
+                                local_stats["doi_created_date_years"][year] += 1
 
                 except Exception:
                     continue
-
-        # WRITE 'NONE' RECORDS TO TEMP FILE
-        if none_records_buffer:
-            with open(none_filename, "wb") as f_none:
-                for rec in none_records_buffer:
-                    f_none.write(rec + b"\n")
 
     except Exception as e:
         print(f"Error reading {filepath}: {e}")
@@ -109,7 +100,6 @@ def process_file(filepath, temp_dir):
 
 def analyze_json_files(folder_path, output_dir="."):
     print("Scanning for files...")
-    # Matches .ndjson recursively
     files = glob.glob(os.path.join(folder_path, "**", "*.ndjson"), recursive=True)
     total_files = len(files)
 
@@ -117,96 +107,92 @@ def analyze_json_files(folder_path, output_dir="."):
         print("No .ndjson files found!")
         return
 
-    # Create directories
     os.makedirs(output_dir, exist_ok=True)
-    temp_dir = os.path.join(output_dir, "temp_none_files")
-    os.makedirs(temp_dir, exist_ok=True)
-
     print(f"Found {total_files} files. Starting processing...")
 
+    # Global Aggregators
     total_stats = {
         "total_records": 0,
-        "has_created_date": 0,
-        "has_publication_date": 0,
-        "count_none": 0,
-        "count_both": 0,
-        "count_just_created": 0,
-        "count_just_pub": 0,
-        "created_years": Counter(),
-        "pub_years": Counter(),
+        "count_has_pubyear": 0,
+        "count_has_publication_year": 0,
+        "count_has_published": 0,
+        "count_has_doi_created_date": 0,
+        
+        "pubyear_years": Counter(),
+        "publication_year_years": Counter(),
+        "published_years": Counter(),
+        "doi_created_date_years": Counter(),
     }
 
     start_time = time.time()
 
     # MULTIPROCESSING LOOP
     with ProcessPoolExecutor() as executor:
-        # Pass temp_dir to worker so it knows where to dump partial files
-        futures = [executor.submit(process_file, f, temp_dir) for f in files]
+        futures = [executor.submit(process_file, f) for f in files]
 
         for i, future in enumerate(as_completed(futures), 1):
             try:
                 res = future.result()
-                # Aggregate all counters
-                for key, value in res.items():
-                    if isinstance(value, Counter):
-                        total_stats[key].update(value)
-                    else:
-                        total_stats[key] += value
+                # Aggregate results
+                total_stats["total_records"] += res["total_records"]
+                
+                total_stats["count_has_pubyear"] += res["count_has_pubyear"]
+                total_stats["count_has_publication_year"] += res["count_has_publication_year"]
+                total_stats["count_has_published"] += res["count_has_published"]
+                total_stats["count_has_doi_created_date"] += res["count_has_doi_created_date"]
+                
+                total_stats["pubyear_years"].update(res["pubyear_years"])
+                total_stats["publication_year_years"].update(res["publication_year_years"])
+                total_stats["published_years"].update(res["published_years"])
+                total_stats["doi_created_date_years"].update(res["doi_created_date_years"])
+                
             except Exception as e:
                 print(f"\nWorker error: {e}")
 
+            # Live Progress Update
             msg = f"Progress: {i}/{total_files} files processed ({(i / total_files) * 100:.1f}%)"
             print(msg, end="\r")
             sys.stdout.flush()
 
     print()
-
-    # MERGE TEMP 'NONE' FILES
-    print("Merging 'none' records into none.ndjson...")
-    final_none_path = os.path.join(output_dir, "none.ndjson")
-
-    with open(final_none_path, "wb") as outfile:
-        temp_files = glob.glob(os.path.join(temp_dir, "none_part_*.ndjson"))
-        for tmp in temp_files:
-            with open(tmp, "rb") as infile:
-                shutil.copyfileobj(infile, outfile)
-            os.remove(tmp)  # Cleanup immediately
-
-    # Remove temp folder if empty
-    try:
-        os.rmdir(temp_dir)
-    except OSError:
-        pass
-
     end_time = time.time()
     print(f"Processing complete in {end_time - start_time:.2f} seconds.")
 
-    # --- SAVING STATS ---
-    print("Saving statistics...")
+    # --- SAVING CSVs ---
+    print("Saving CSV reports...")
 
-    # A. JSON Report
-    json_path = os.path.join(output_dir, "full_stats.json")
-    with open(json_path, "w") as f:
-        clean_stats = total_stats.copy()
-        clean_stats["created_years"] = dict(total_stats["created_years"])
-        clean_stats["pub_years"] = dict(total_stats["pub_years"])
-        json.dump(clean_stats, f, indent=4)
-
-    # B. CSV Helper
-    def write_sorted_csv(filename, counter_obj):
+    def write_csv(filename, counter_obj):
         csv_path = os.path.join(output_dir, filename)
+        # Sort by Year (earliest first)
         sorted_data = sorted(counter_obj.items(), key=lambda x: x[0])
+        
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["Year", "Count"])
             writer.writerows(sorted_data)
+        print(f"Saved: {csv_path}")
 
-    write_sorted_csv("created_years.csv", total_stats["created_years"])
-    write_sorted_csv("pub_years.csv", total_stats["pub_years"])
+    # 1. pubyear
+    write_csv("pubyear_count.csv", total_stats["pubyear_years"])
+    
+    # 2. publication_year
+    write_csv("publication_year_count.csv", total_stats["publication_year_years"])
+    
+    # 3. published
+    write_csv("published_per_year_count.csv", total_stats["published_years"])
+    
+    # 4. doi_created_date
+    write_csv("doi_created_date_per_year_count.csv", total_stats["doi_created_date_years"])
 
-    print("\nSummary:")
-    print(f"  Total Records:   {total_stats['total_records']:,}")
-    print(f"  Both Dates:      {total_stats['count_both']:,}")
-    print(f"  Just Created:    {total_stats['count_just_created']:,}")
-    print(f"  Just Published:  {total_stats['count_just_pub']:,}")
-    print(f"  No Dates (None): {total_stats['count_none']:,} (Saved to none.ndjson)")
+    # --- SUMMARY PRINT ---
+    print("\n--- Summary ---")
+    print(f"Total Records Scanned: {total_stats['total_records']:,}")
+    print(f"Records with 'pubyear':          {total_stats['count_has_pubyear']:,}")
+    print(f"Records with 'publication_year': {total_stats['count_has_publication_year']:,}")
+    print(f"Records with 'published':        {total_stats['count_has_published']:,}")
+    print(f"Records with 'doi_created_date': {total_stats['count_has_doi_created_date']:,}")
+
+if __name__ == '__main__':
+    # REPLACE WITH YOUR FOLDER PATH
+    folder_path = r"D:\pipeline-data\records\slim-records"
+    analyze_json_files(folder_path, output_dir="results")
