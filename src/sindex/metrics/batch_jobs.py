@@ -8,8 +8,6 @@ import duckdb
 import orjson
 import pandas as pd
 
-from sindex.core.dates import _to_datetime_utc, get_best_dataset_date
-
 
 def main_metadata(data):
     """
@@ -29,26 +27,13 @@ def main_metadata(data):
     if not dataset_id:
         return None  # Skip
 
-    raw_pubdate_str = get_best_dataset_date(
-        data.get("publication_date"), data.get("created_date")
-    )
-
-    pubdate_obj = None
-    pubyear = None
-
-    if raw_pubdate_str:
-        pub_dt = _to_datetime_utc(raw_pubdate_str)
-        if pub_dt:
-            pubdate_obj = pub_dt
-            pubyear = pub_dt.year
-
     # Output
     return {
         "dataset_id": dataset_id,
         "source": data.get("source"),
         "title": data.get("title"),
-        "pubdate": pubdate_obj,  # ISO string
-        "pubyear": pubyear,
+        "pubdate": data.get("publication_date"),  # ISO string
+        "pubyear": data.get("pubyear"),
         "creators": data.get("creators"),
     }
 
@@ -70,6 +55,7 @@ def _worker_process_file(args):
 
     try:
         with open(in_path, "rb") as f_in, open(out_path, "wb") as f_out:
+            output_buffer = []
             for line in f_in:
                 line = line.strip()
                 if not line:
@@ -82,11 +68,19 @@ def _worker_process_file(args):
                     meta = main_metadata(rec)
 
                     if meta:
-                        f_out.write(orjson.dumps(meta) + b"\n")
+                        output_buffer.append(orjson.dumps(meta))
                         k += 1
+
+                    # Write in chunks of 1000 to keep memory low but speed high
+                    if len(output_buffer) >= 1000:
+                        f_out.write(b"\n".join(output_buffer) + b"\n")
+                        output_buffer = []
 
                 except (orjson.JSONDecodeError, ValueError):
                     b += 1
+            # Final flush
+            if output_buffer:
+                f_out.write(b"\n".join(output_buffer) + b"\n")
 
         if k == 0:
             try:
@@ -110,7 +104,7 @@ def batch_process_metadata_from_slim(
     dst_folder: str,
     overwrite: bool = False,
     one_line_progress: bool = True,
-    workers: int = os.cpu_count(),
+    workers: int = 4,
 ) -> dict:
     src, dst = Path(src_folder), Path(dst_folder)
 

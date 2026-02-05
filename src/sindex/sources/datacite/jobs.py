@@ -15,7 +15,7 @@ import orjson
 import orjson as json
 import requests
 
-from sindex.core.dates import _parse_date_strict, get_best_dataset_date
+from sindex.core.dates import _parse_date_strict
 from sindex.core.http import make_session
 from sindex.core.ids import _norm_doi
 from sindex.core.io import _iter_json_lines
@@ -25,8 +25,7 @@ from .discovery import (
     stream_datacite_records,
 )
 from .normalize import (
-    datacite_citations_block_to_records,
-    datacite_citations_block_to_records_optimized,
+    datacite_citations_block_to_records_unified,
     slim_datacite_record,
 )
 
@@ -480,15 +479,15 @@ def find_citations_dc_from_citation_block(
     target_doi: str,
     citations: Dict[str, list] | None,
     *,
-    dataset_pub_date: str | None = None,
+    dataset_pubyear: int | None = None,
 ) -> List[Dict[str, object]]:
     """
     Wrapper
     """
-    return datacite_citations_block_to_records(
+    return datacite_citations_block_to_records_unified(
         target_doi=target_doi,
         citations=citations,
-        dataset_pub_date=dataset_pub_date,
+        dataset_pubyear=dataset_pubyear,
     )
 
 
@@ -627,76 +626,6 @@ def batch_slim_datacite_chunked(
 # --------------------
 
 
-def batch_find_citations_dc_from_citation_block(
-    input_folder: str, output_filepath: str
-):
-    input_path = Path(input_folder)
-
-    files = list(input_path.glob("*.ndjson"))
-    total_files = len(files)
-
-    if total_files == 0:
-        print(f"No .ndjson files found in {input_folder}")
-        return
-
-    print(f"Starting processing of {total_files} files")
-    count_citations = 0
-    with open(output_filepath, "w", encoding="utf-8") as f_out:
-        for idx, file_path in enumerate(files, 1):
-            print(
-                f"\rProcessing file {idx} of {total_files} ({file_path.name})",
-                end="",
-                flush=True,
-            )
-
-            with open(file_path, "r", encoding="utf-8") as f_in:
-                for line in f_in:
-                    if not line.strip():
-                        continue
-
-                    data = json.loads(line)
-
-                    # Check if citations exists and is not empty/None
-                    citations = data.get("citations")
-                    if not citations or not any(citations.values()):
-                        continue
-
-                    # Extract target_doi
-                    target_doi = None
-                    for item in data.get("identifiers", []):
-                        if item.get("identifier_type") == "doi":
-                            target_doi = item.get("identifier")
-                            break
-
-                    if not target_doi:
-                        continue
-
-                    # Best pub date
-                    publication_date = data.get("publication_date")
-                    created_date = data.get("created_date")
-                    best_date = get_best_dataset_date(publication_date, created_date)
-
-                    # Process
-                    citation_records = datacite_citations_block_to_records(
-                        target_doi=target_doi,
-                        citations=citations,
-                        dataset_pub_date=best_date,
-                    )
-
-                    for record in citation_records:
-                        f_out.write(json.dumps(record) + "\n")
-                        count_citations += 1
-
-                    print(
-                        f"\rProcessing file {idx}/{total_files} | Total Citations: {count_citations:,}",
-                        end="",
-                        flush=True,
-                    )
-
-    # Final newline to clear the progress line
-    print(f"\nDone! Saved {count_citations:,} citations")
-
-
 def extract_unique_dois_from_citation_blocks(input_folder: str, output_parquet: str):
     """
     1. Iterates through all .ndjson files in a folder.
@@ -782,7 +711,6 @@ def lookup_dates_in_oa_snapshot(db_path: str, input_parquet: str, output_parquet
     con = duckdb.connect(db_path, read_only=True)
 
     try:
-        # The 'magic' query:
         # 1. read_parquet(input) acts as a virtual table
         # 2. We join it directly to the 462M row table
         # 3. We use COPY to stream results straight to the output file
@@ -887,15 +815,13 @@ def batch_find_citations_dc_from_citation_block_optimized(
                     if not target_doi:
                         continue
 
-                    best_date = get_best_dataset_date(
-                        data.get("publication_date"), data.get("created_date")
-                    )
+                    dataset_pubyear = data.get("pubyear")
 
-                    citation_records = datacite_citations_block_to_records_optimized(
+                    citation_records = datacite_citations_block_to_records_unified(
                         target_doi=target_doi,
                         citations=citations,
                         date_map=date_map,
-                        dataset_pub_date=best_date,
+                        dataset_pubyear=dataset_pubyear,
                     )
 
                     for record in citation_records:
@@ -907,17 +833,25 @@ def batch_find_citations_dc_from_citation_block_optimized(
     print(f"\n[DONE] Saved {count_citations:,} citations in {total_time:.2f}s.")
 
 
-def init_worker(shared_counter, shared_lock):
-    """Initializes global variables in the worker process."""
-    global _worker_counter, _worker_lock
+def init_worker(shared_counter, shared_lock, parquet_path):
+    """Initializes global variables AND loads the cache inside the worker."""
+    global _worker_counter, _worker_lock, _date_map
     _worker_counter = shared_counter
     _worker_lock = shared_lock
 
+    # Each worker loads the data itself
+    import duckdb
 
-def process_file_chunk(
-    file_path, start_byte, end_byte, date_map, chunk_id, output_folder
-):
+    with duckdb.connect(":memory:") as conn:
+        res = conn.execute(
+            f"SELECT doi, pubdate FROM read_parquet('{parquet_path}')"
+        ).fetchall()
+        _date_map = dict(res)
+
+
+def process_file_chunk(file_path, start_byte, end_byte, chunk_id, output_folder):
     processed_in_chunk = 0
+    local_progress_tracker = 0
     part_file = Path(output_folder) / f"part_{chunk_id}.ndjson"
 
     with open(file_path, "rb") as f, open(part_file, "wb") as f_out:
@@ -930,43 +864,47 @@ def process_file_chunk(
             if not line:
                 break
 
-            # --- FIXED: Use the global lock explicitly ---
-            with _worker_lock:
-                _worker_counter.value += 1
+            local_progress_tracker += 1
+            if local_progress_tracker >= 5000:
+                with _worker_lock:
+                    _worker_counter.value += local_progress_tracker
+                local_progress_tracker = 0
 
-            try:
-                data = json.loads(line)
-                citations = data.get("citations")
-                if not citations or not any(citations.values()):
-                    continue
-
-                target_doi = next(
-                    (
-                        item.get("identifier")
-                        for item in data.get("identifiers", [])
-                        if item.get("identifier_type") == "doi"
-                    ),
-                    None,
-                )
-                if not target_doi:
-                    continue
-
-                best_date = get_best_dataset_date(
-                    data.get("publication_date"), data.get("created_date")
-                )
-
-                citation_records = datacite_citations_block_to_records_optimized(
-                    target_doi=target_doi,
-                    citations=citations,
-                    date_map=date_map,
-                    dataset_pub_date=best_date,
-                )
-
-                for record in citation_records:
-                    f_out.write(json.dumps(record) + b"\n")
-                    processed_in_chunk += 1
-            except Exception:
+            data = json.loads(line)
+            citations = data.get("citations")
+            if not citations:
                 continue
+
+            target_doi = None
+            for item in data.get("identifiers", []):
+                if item.get("identifier_type") == "doi":
+                    target_doi = item.get("identifier")
+                    break
+
+            if not target_doi:
+                continue
+
+            dataset_pubyear = data.get("pubyear")
+            print("pubyear")
+            print(dataset_pubyear)
+            citation_records = datacite_citations_block_to_records_unified(
+                target_doi=target_doi,
+                citations=citations,
+                date_map=_date_map,
+                dataset_p=dataset_pubyear,
+            )
+
+            for record in citation_records:
+                chunk = json.dumps(record)
+                if isinstance(chunk, str):
+                    chunk = chunk.encode("utf-8")
+                f_out.write(chunk + b"\n")
+                processed_in_chunk += 1
+
+        # Final progress update
+        if local_progress_tracker > 0:
+            with _worker_lock:
+                _worker_counter.value += local_progress_tracker
 
     return processed_in_chunk
 
@@ -976,24 +914,22 @@ def batch_find_citations_from_dc_parallel(
 ):
     start_time = time.time()
 
-    # 1. Load Cache
-    print(f"[*] Loading pubdate cache from {Path(pubdate_parquet_path).name}...")
-    with duckdb.connect(":memory:") as conn:
-        res = conn.execute(
-            f"SELECT doi, pubdate FROM read_parquet('{pubdate_parquet_path}')"
-        ).fetchall()
-        date_map = dict(res)
+    # Don't load the map here. We let the workers do it.
 
-    # 2. Line Count
+    # 1. Line Count
     print("[*] Counting exact lines in input file...")
     with open(input_file, "rb") as f:
         total_lines = sum(1 for _ in f)
     print(f"    -> Total workload: {total_lines:,} lines.")
 
-    # 3. Setup Parallel Chunks
+    # 2. Setup Chunks
     file_path = Path(input_file)
     file_size = file_path.stat().st_size
-    num_cpus = mp.cpu_count()
+
+    # CRITICAL: Lower the CPU count to save RAM
+    num_cpus = min(8, mp.cpu_count())
+    print(f"[*] Using {num_cpus} workers (reduced to save RAM)...")
+
     chunk_size = file_size // num_cpus
     temp_dir = Path("./temp_parts")
     temp_dir.mkdir(exist_ok=True)
@@ -1004,23 +940,23 @@ def batch_find_citations_from_dc_parallel(
         end = (i + 1) * chunk_size if i != num_cpus - 1 else file_size
         offsets.append((start, end))
 
-    # 4. Manager for Windows Shared Memory
     manager = mp.Manager()
     shared_counter = manager.Value("i", 0)
     shared_lock = manager.Lock()
 
-    print(f"[*] Launching {num_cpus} workers...")
-
-    total_citations_found = 0
+    print("[*] Launching workers...")
 
     with mp.Pool(
         processes=num_cpus,
         initializer=init_worker,
-        initargs=(shared_counter, shared_lock),
+        # Pass the path to the parquet so workers can load it
+        initargs=(shared_counter, shared_lock, pubdate_parquet_path),
     ) as pool:
         jobs = [
             pool.apply_async(
-                process_file_chunk, (input_file, s, e, date_map, i, temp_dir)
+                process_file_chunk,
+                # Note: date_map is NOT passed here anymore
+                (input_file, s, e, i, temp_dir),
             )
             for i, (s, e) in enumerate(offsets)
         ]
@@ -1028,16 +964,14 @@ def batch_find_citations_from_dc_parallel(
         # Monitor Loop
         while any(not j.ready() for j in jobs):
             current = shared_counter.value
-            if total_lines > 0:
-                pct = (current / total_lines) * 100
-                print(
-                    f"\rProgress: {pct:.2f}% | Processed: {current:,}/{total_lines:,} lines",
-                    end="",
-                    flush=True,
-                )
+            pct = (current / total_lines) * 100
+            print(
+                f"\rProgress: {pct:.2f}% | Processed: {current:,}/{total_lines:,}",
+                end="",
+                flush=True,
+            )
             time.sleep(0.5)
 
-        # Collect return values from all workers (this is the citation count)
         total_citations_found = sum(j.get() for j in jobs)
 
     # 5. Merge

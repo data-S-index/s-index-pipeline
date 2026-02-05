@@ -4,34 +4,9 @@ from pathlib import Path
 
 import duckdb
 
-from sindex.core.dates import _norm_date_iso
-
-
-def get_best_publication_date_datacite_record(attr):
-    candidates = []
-
-    # Extract "Issued" date - this seems most likely to be the date a dataset was published
-    for d in attr.get("dates", []):
-        if d.get("dateType") == "Issued" and d.get("date"):
-            candidates.append(str(d.get("date")))
-            break
-
-    # Add other fallbacks to the candidate list
-    candidates.append(attr.get("published"))
-    candidates.append(attr.get("publicationYear"))
-
-    # Iterate through candidates and return the first one that normalizes
-    for candidate in candidates:
-        if not candidate:
-            continue
-        try:
-            return _norm_date_iso(str(candidate))
-        except (ValueError, TypeError):
-            continue  # Try the next candidate if normalization fails
-
 
 def get_relevant_citations_block_from_ndjson(
-    db_path, ndjson_folder, target_table, output_file_path, reset_log=False
+    db_path, ndjson_folder, target_table, output_file_path, reset_log=True
 ):
     output_dir = os.path.dirname(output_file_path)
     if output_dir:
@@ -41,6 +16,7 @@ def get_relevant_citations_block_from_ndjson(
 
     con.execute("SET temp_directory = './duckdb_temp/'")
     con.execute("SET max_memory = '8GB'")
+    con.execute("PRAGMA enable_progress_bar")
 
     if reset_log:
         con.execute("DROP TABLE IF EXISTS processed_files_citation_blocks")
@@ -84,15 +60,13 @@ def get_relevant_citations_block_from_ndjson(
             SELECT 
                 A.identifiers, 
                 A.citations,
-                A.publication_date,
-                A.created_date
+                A.pubyear
             FROM read_ndjson_auto(
                 {new_files}, 
                 columns={{
                     'identifiers': 'JSON[]', 
                     'citations': 'JSON', 
-                    'publication_date': 'VARCHAR', 
-                    'created_date': 'VARCHAR'
+                    'pubyear': 'INTEGER'
                 }}
             ) AS A
             INNER JOIN {target_table} AS B 

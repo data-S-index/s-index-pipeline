@@ -54,7 +54,7 @@ def fetch_crossref_pubdate(doi: str, session: requests.Session | None = None) ->
     msg = crossref_record.get("message") or {}
 
     # Prefer publisher-declared dates in order
-    for key in ("published", "issued", "published-online", "published-print"):
+    for key in ("published", "published-online", "published-print", "issued"):
         dp = (msg.get(key) or {}).get("date-parts")
         iso_raw = _as_iso_from_dateparts(dp) if dp else None
 

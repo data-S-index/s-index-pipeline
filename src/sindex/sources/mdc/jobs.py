@@ -118,6 +118,7 @@ def find_citations_mdc_duckdb(
         citation_year = None
         if is_realistic_integer_year(citation_year_raw):
             citation_year = citation_year_raw
+
         rec: Dict[str, Any] = {
             "dataset_id": target_id,
             "source": ["mdc"],
