@@ -12,7 +12,6 @@ from typing import Dict, Iterable, List
 
 import duckdb
 import orjson
-import orjson as json
 import requests
 
 from sindex.core.dates import _parse_date_strict
@@ -619,6 +618,72 @@ def batch_slim_datacite_chunked(
     print(f"Processing Rate:  {rate:,} records/sec")
     print(f"Output Files:     {batch_idx} files written to {dst}")
     print("-" * 50)
+
+    return {"read": total_read, "kept": total_kept, "bad": total_bad, "time": dt}
+
+
+def batch_slim_datacite_chunked_tuned(
+    src_folder: str,
+    dst_folder: str,
+    batch_size: int = 5000,  # Reduced from 100k to prevent pipe clogging
+    workers: int = os.cpu_count(),
+) -> dict:
+    src, dst = Path(src_folder), Path(dst_folder)
+    dst.mkdir(parents=True, exist_ok=True)
+
+    # 1. Gather all files
+    all_files = sorted(list(src.glob("*.ndjson")) + list(src.glob("*.ndjson.gz")))
+    if not all_files:
+        print("No files found.")
+        return {}
+
+    print(f"Found {len(all_files)} input files.")
+    print(
+        f"Streaming with {workers} workers (recycling every 50 tasks). Batch: {batch_size:,}..."
+    )
+
+    t0 = time.time()
+    total_read = 0
+    total_kept = 0
+    total_bad = 0
+    batch_idx = 0
+
+    # 2. Worker Pool with Recycling (maxtasksperchild)
+    # This prevents the memory bloat/slowdown after processing millions of lines
+    with Pool(workers, maxtasksperchild=50) as pool:
+        # Create the generator
+        line_generator = _stream_lines_from_files(all_files, batch_size)
+
+        # Process
+        for result_lines, stats in pool.imap_unordered(
+            _worker_process_batch, line_generator
+        ):
+            total_read += stats["read"]
+            total_kept += stats["kept"]
+            total_bad += stats["bad"]
+
+            # Write output
+            out_name = f"slim-{batch_idx}.ndjson"
+            out_path = dst / out_name
+
+            # Write bytes directly
+            with open(out_path, "wb") as f_out:
+                f_out.writelines(result_lines)
+
+            batch_idx += 1
+
+            # Simple Progress Bar
+            if batch_idx % 10 == 0:
+                print(
+                    f"\rProcessed: {total_read:,} lines | Batches: {batch_idx} | Bad: {total_bad}",
+                    end="",
+                    flush=True,
+                )
+
+    # Final Stats
+    dt = time.time() - t0
+    rate = int(total_kept / dt) if dt > 0 else 0
+    print(f"\nDONE in {dt:.2f}s | Rate: {rate:,} rec/s")
 
     return {"read": total_read, "kept": total_kept, "bad": total_bad, "time": dt}
 
