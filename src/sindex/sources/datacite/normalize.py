@@ -421,6 +421,7 @@ def datacite_citations_block_to_records_unified(
     date_map: Dict[str, str] | None = None,
     *,
     dataset_pubyear: int | None = None,
+    skip_openalex: bool = False,
 ) -> List[Dict[str, object]]:
     """
     Convert a slimmed DataCite citations block into normalized citation records.
@@ -456,7 +457,9 @@ def datacite_citations_block_to_records_unified(
         if citation_doi in safe_date_map:
             citation_date_raw = safe_date_map[citation_doi]
         else:
-            citation_date_raw = best_publication_date_for_doi(citation_doi)
+            citation_date_raw = best_publication_date_for_doi(
+                citation_doi, skip_openalex=skip_openalex
+            )
 
         citation_date = None
         if citation_date_raw:

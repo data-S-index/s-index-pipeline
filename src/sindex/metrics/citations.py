@@ -3,12 +3,9 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable
 
 import orjson
-
-from sindex.core.dates import _to_datetime_utc
 
 
 def merge_citations_dicts(
@@ -16,37 +13,30 @@ def merge_citations_dicts(
 ) -> list[dict[str, Any]]:
     """
     Merge multiple collections of citation records (in-memory) into a single
-    deduplicated list.
-
-    Each input can be:
-      - a list/iterable of citation dicts, OR
-      - a single citation dict (it will be treated as one record)
+    deduplicated list using citation_year priority.
 
     Expected record shape (generic):
         {
             "dataset_id": <str>,
-            "source": [<str>] or <str> or missing,
             "citation_link": <str>,
-            "citation_date": <ISO string or empty> (optional),
-            "citation_weight": <any numeric> (optional)
+            "source": [<str>] or <str>,
+            "citation_year": <int> (priority),
+            "citation_date": <str>,
+            "placeholder_year": <bool>,
+            "placeholder_date": <bool>,
+            "citation_weight": <numeric>
         }
 
     Dedup key: (dataset_id, citation_link)
 
     Merge behavior:
-      - "source" becomes union of sources (sorted)
-      - "citation_date" selection:
-          * prefer any dated record over no-date record
-          * if both dated, keep earliest date
-          * if final selection has no date, omit "citation_date" from output
-      - "citation_weight" is taken from the selected record (the date winner)
-
-    Returns:
-      List of merged records (order not guaranteed).
+      - "source": union of sources (sorted)
+      - "citation_year" (and related fields):
+          * prefer record with earliest citation_year
+          * if "winning" year is selected, we overwrite citation_date,
+            placeholder flags, and weight from that same record.
     """
     merged: dict[tuple[str, str], dict[str, Any]] = {}
-    best_dt: dict[tuple[str, str], Optional[datetime]] = {}
-    total_input_records = 0
 
     def iter_records(obj: Iterable[dict[str, Any]] | dict[str, Any]):
         if isinstance(obj, dict):
@@ -59,7 +49,6 @@ def merge_citations_dicts(
             continue
 
         for rec in iter_records(obj):
-            total_input_records += 1
             if not isinstance(rec, dict):
                 continue
 
@@ -68,52 +57,50 @@ def merge_citations_dicts(
             if not dataset_id or not link:
                 continue
 
+            # 1. Standardize Key
             key = (str(dataset_id), str(link))
 
-            # Normalize sources -> set[str]
+            # 2. Normalize sources -> set[str]
             src = rec.get("source") or []
             if isinstance(src, str):
                 src = [src]
             new_sources = {str(s) for s in src if s}
 
-            date_str = rec.get("citation_date") or ""
-            dt = _to_datetime_utc(date_str)
-
-            existing = merged.get(key)
-            if existing is None:
-                entry: dict[str, Any] = {
+            # 3. Initialization if new
+            if key not in merged:
+                # Create new entry copying all relevant fields
+                entry = {
                     "dataset_id": key[0],
-                    "source": sorted(new_sources),
                     "citation_link": key[1],
+                    "source": sorted(new_sources),
+                    "citation_year": rec.get("citation_year"),
+                    "citation_date": rec.get("citation_date"),
+                    "placeholder_year": rec.get("placeholder_year"),
+                    "placeholder_date": rec.get("placeholder_date"),
                     "citation_weight": rec.get("citation_weight"),
                 }
-                if dt is not None:
-                    entry["citation_date"] = str(rec.get("citation_date"))
                 merged[key] = entry
-                best_dt[key] = dt
                 continue
 
-            # Merge sources
+            # 4. Update Existing Record
+            existing = merged[key]
+
+            # A) Merge sources
             existing_sources = set(existing.get("source") or [])
             existing["source"] = sorted(existing_sources | new_sources)
 
-            existing_dt = best_dt.get(key)
-            replace = False
+            # B) Check Year Logic
+            new_year = rec.get("citation_year")
+            ext_year = existing.get("citation_year")
 
-            # Prefer dated over undated
-            if existing_dt is None and dt is not None:
-                replace = True
-            # If both dated, keep earliest
-            elif existing_dt is not None and dt is not None and dt < existing_dt:
-                replace = True
-
-            if replace:
-                existing["citation_weight"] = rec.get("citation_weight")
-                if dt is not None:
-                    existing["citation_date"] = str(rec.get("citation_date"))
-                else:
-                    existing.pop("citation_date", None)
-                best_dt[key] = dt
+            # Update if we have a year AND (existing has no year OR new is earlier)
+            if new_year is not None:
+                if ext_year is None or new_year < ext_year:
+                    existing["citation_year"] = new_year
+                    existing["citation_date"] = rec.get("citation_date")
+                    existing["placeholder_year"] = rec.get("placeholder_year")
+                    existing["placeholder_date"] = rec.get("placeholder_date")
+                    existing["citation_weight"] = rec.get("citation_weight")
 
     return list(merged.values())
 
@@ -214,12 +201,22 @@ def merge_citations_from_files_fast(
                 existing["source"].update(new_src_set)
 
                 # Date/Weight logic
-                new_date = rec.get("citation_date")
-                ext_date = existing.get("citation_date")
+                new_year = rec.get("citation_year")
+                ext_year = existing.get("citation_year")
 
-                if new_date:
-                    if not ext_date or new_date < ext_date:
-                        existing["citation_date"] = new_date
+                # We prefer the earliest year.
+                # If existing has no year, or the new year is earlier:
+                if new_year is not None:
+                    if ext_year is None or new_year < ext_year:
+                        # Update the "winning" year and its related metadata
+                        existing["citation_year"] = new_year
+                        existing["placeholder_year"] = rec.get("placeholder_year")
+
+                        # Sync the specific date fields to this winning year
+                        existing["citation_date"] = rec.get("citation_date")
+                        existing["placeholder_date"] = rec.get("placeholder_date")
+
+                        # Maintain weight based on the best year
                         existing["citation_weight"] = rec.get("citation_weight")
 
     sys.stdout.write(
@@ -238,43 +235,3 @@ def merge_citations_from_files_fast(
             f.write(orjson.dumps(rec) + b"\n")
 
     print("Done!")
-
-
-def combine_citations(input_paths, output_path):
-    """
-    Combines multiple .ndjson files with a progress counter that overwrites itself.
-    Used to combine citation to DOIs and EMDB
-    """
-    current_now = datetime.now().isoformat()
-    processed_count = 0
-
-    try:
-        with open(output_path, "w", encoding="utf-8") as outfile:
-            for file_path in input_paths:
-                with open(file_path, "r", encoding="utf-8") as infile:
-                    for line in infile:
-                        line = line.strip()
-                        if not line:
-                            continue
-
-                        entry = json.loads(line)
-
-                        if entry.get("citation_date"):
-                            entry["placeholder_date"] = False
-                        else:
-                            entry["placeholder_date"] = True
-                            entry["citation_date"] = current_now
-
-                        outfile.write(json.dumps(entry) + "\n")
-                        processed_count += 1
-
-                        # Update progress every 10,000 lines
-                        if processed_count % 10000 == 0:
-                            sys.stdout.write(f"\rLines processed: {processed_count:,}")
-                            sys.stdout.flush()
-
-        # Final print to move to a new line and show total
-        print(f"\nFinished! Total entries saved: {processed_count:,}")
-
-    except Exception as e:
-        print(f"\nAn error occurred: {e}")

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
+import os
 import sys
-from datetime import datetime
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable
 
-from sindex.core.dates import _to_datetime_utc
+import orjson
 
 
 def merge_mentions_dicts(
@@ -13,18 +12,17 @@ def merge_mentions_dicts(
 ) -> list[dict[str, Any]]:
     """
     Merge multiple collections of mention records (in-memory) into a single
-    deduplicated list.
-
-    Each input can be:
-      - a list/iterable of mention dicts, OR
-      - a single mention dict (treated as one record)
+    deduplicated list using mention_year priority.
 
     Expected record shape:
         {
             "dataset_id": <str>,
             "source": [<str>] or <str> or missing,
             "mention_link": <str>,
+            "mention_year": <int> (priority),
             "mention_date": <ISO string or empty> (optional),
+            "placeholder_year": <bool>,
+            "placeholder_date": <bool>,
             "mention_weight": <any numeric> (optional)
         }
 
@@ -32,18 +30,12 @@ def merge_mentions_dicts(
 
     Merge behavior:
       - "source" becomes union of sources (sorted)
-      - "mention_date" selection:
-          * prefer any dated record over no-date record
-          * if both dated, keep earliest date
-          * if final selection has no date, omit "mention_date" from output
-      - "mention_weight" is taken from the selected record (the date winner)
-
-    Returns:
-      List of merged mention records (order not guaranteed).
+      - "mention_year" (and related fields):
+          * prefer record with earliest mention_year
+          * if "winning" year is selected, we overwrite mention_date,
+            placeholder flags, and weight from that same record.
     """
     merged: dict[tuple[str, str], dict[str, Any]] = {}
-    best_dt: dict[tuple[str, str], Optional[datetime]] = {}
-    total_input_records = 0
 
     def iter_records(obj: Iterable[dict[str, Any]] | dict[str, Any]):
         if isinstance(obj, dict):
@@ -56,7 +48,6 @@ def merge_mentions_dicts(
             continue
 
         for rec in iter_records(obj):
-            total_input_records += 1
             if not isinstance(rec, dict):
                 continue
 
@@ -65,90 +56,139 @@ def merge_mentions_dicts(
             if not dataset_id or not link:
                 continue
 
+            # 1. Standardize Key
             key = (str(dataset_id), str(link))
 
-            # Normalize sources -> set[str]
+            # 2. Normalize sources -> set[str]
             src = rec.get("source") or []
             if isinstance(src, str):
                 src = [src]
             new_sources = {str(s) for s in src if s}
 
-            date_str = rec.get("mention_date") or ""
-            dt = _to_datetime_utc(date_str)
-
-            existing = merged.get(key)
-            if existing is None:
-                entry: dict[str, Any] = {
+            # 3. Initialization if new
+            if key not in merged:
+                entry = {
                     "dataset_id": key[0],
-                    "source": sorted(new_sources),
                     "mention_link": key[1],
+                    "source": sorted(new_sources),
+                    "mention_year": rec.get("mention_year"),
+                    "mention_date": rec.get("mention_date"),
+                    "placeholder_year": rec.get("placeholder_year"),
+                    "placeholder_date": rec.get("placeholder_date"),
                     "mention_weight": rec.get("mention_weight"),
                 }
-                if dt is not None:
-                    entry["mention_date"] = str(rec.get("mention_date"))
                 merged[key] = entry
-                best_dt[key] = dt
                 continue
 
-            # Merge sources
+            # 4. Update Existing Record
+            existing = merged[key]
+
+            # A) Merge sources
             existing_sources = set(existing.get("source") or [])
             existing["source"] = sorted(existing_sources | new_sources)
 
-            existing_dt = best_dt.get(key)
-            replace = False
+            # B) Check Year Logic
+            new_year = rec.get("mention_year")
+            ext_year = existing.get("mention_year")
 
-            # Prefer dated over undated
-            if existing_dt is None and dt is not None:
-                replace = True
-            # If both dated, keep earliest
-            elif existing_dt is not None and dt is not None and dt < existing_dt:
-                replace = True
-
-            if replace:
-                existing["mention_weight"] = rec.get("mention_weight")
-                if dt is not None:
-                    existing["mention_date"] = str(rec.get("mention_date"))
-                else:
-                    existing.pop("mention_date", None)
-                best_dt[key] = dt
+            # Update if we have a year AND (existing has no year OR new is earlier)
+            if new_year is not None:
+                if ext_year is None or new_year < ext_year:
+                    existing["mention_year"] = new_year
+                    existing["mention_date"] = rec.get("mention_date")
+                    existing["placeholder_year"] = rec.get("placeholder_year")
+                    existing["placeholder_date"] = rec.get("placeholder_date")
+                    existing["mention_weight"] = rec.get("mention_weight")
 
     return list(merged.values())
 
 
-def combine_mentions(input_paths, output_path):
-    """
-    Combines multiple .ndjson files with a progress counter that overwrites itself.
-    """
-    current_now = datetime.now().isoformat()
-    processed_count = 0
+def merge_mentions_from_files_fast(
+    input_paths: list[str], output_path: str, update_interval: int = 10000
+):
+    merged = {}
+    total_in = 0
 
-    try:
-        with open(output_path, "w", encoding="utf-8") as outfile:
-            for file_path in input_paths:
-                with open(file_path, "r", encoding="utf-8") as infile:
-                    for line in infile:
-                        line = line.strip()
-                        if not line:
-                            continue
+    # Filter out None or empty strings immediately
+    valid_paths = [p for p in input_paths if p and isinstance(p, str)]
 
-                        entry = json.loads(line)
+    print(f"Starting merge of {len(valid_paths)} valid files...")
 
-                        if entry.get("mention_date"):
-                            entry["placeholder_date"] = False
-                        else:
-                            entry["placeholder_date"] = True
-                            entry["mention_date"] = current_now
+    for path in valid_paths:
+        # Skip if the file doesn't exist
+        if not os.path.isfile(path):
+            print(f"  ! Warning: Skipping missing file: {path}")
+            continue
 
-                        outfile.write(json.dumps(entry) + "\n")
-                        processed_count += 1
+        with open(path, "rb") as f:
+            for line in f:
+                if not line.strip():
+                    continue
 
-                        # Update progress every 10,000 lines
-                        if processed_count % 10000 == 0:
-                            sys.stdout.write(f"\rLines processed: {processed_count:,}")
-                            sys.stdout.flush()
+                total_in += 1
+                if total_in % update_interval == 0:
+                    sys.stdout.write(
+                        f"\rRecords processed: {total_in:,} | Unique found: {len(merged):,}"
+                    )
+                    sys.stdout.flush()
 
-        # Final print to move to a new line and show total
-        print(f"\nFinished! Total entries saved: {processed_count:,}")
+                rec = orjson.loads(line)
 
-    except Exception as e:
-        print(f"\nAn error occurred: {e}")
+                did = rec.get("dataset_id")
+                lnk = rec.get("mention_link")
+                if not did or not lnk:
+                    continue
+
+                # Clean link similar to citation logic (remove anchors/trailing slashes)
+                lnk_clean = str(lnk).split("#")[0].rstrip("/").strip()
+                rec["mention_link"] = lnk_clean
+
+                key = (did, lnk_clean)
+
+                # Source handling
+                src = rec.get("source") or []
+                new_src_set = {src} if isinstance(src, str) else set(src)
+
+                if key not in merged:
+                    rec["source"] = new_src_set
+                    merged[key] = rec
+                    continue
+
+                existing = merged[key]
+                existing["source"].update(new_src_set)
+
+                # Year/Date/Weight logic
+                new_year = rec.get("mention_year")
+                ext_year = existing.get("mention_year")
+
+                # We prefer the earliest year.
+                # If existing has no year, or the new year is earlier:
+                if new_year is not None:
+                    if ext_year is None or new_year < ext_year:
+                        # Update the "winning" year and its related metadata
+                        existing["mention_year"] = new_year
+                        existing["placeholder_year"] = rec.get("placeholder_year")
+
+                        # Sync the specific date fields to this winning year
+                        existing["mention_date"] = rec.get("mention_date")
+                        existing["placeholder_date"] = rec.get("placeholder_date")
+
+                        # Maintain weight based on the best year
+                        existing["mention_weight"] = rec.get("mention_weight")
+
+    sys.stdout.write(
+        f"\rFinished processing {total_in:,} records. Unique: {len(merged):,}\n"
+    )
+
+    # Write
+    if not merged:
+        print("No records found to write.")
+        return
+
+    print(f"Writing to {output_path}...")
+    with open(output_path, "wb") as f:
+        for rec in merged.values():
+            rec["source"] = sorted(rec["source"])
+            f.write(orjson.dumps(rec) + b"\n")
+
+    print("Done!")
