@@ -95,3 +95,35 @@ def enrich_swh_base_mentions(db_path, input_ndjson, output_ndjson):
         con.close()
 
     return total_lines_saved
+
+
+def load_metadata_map(filepath):
+    """
+    Reads metadata file and returns a dict: { 'EMD-XXXX': publication_year }
+    """
+    meta_map = {}
+    print(f"Loading metadata from {filepath}...")
+
+    with open(filepath, "r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+
+                # Extract Publication Year
+                pub_year = rec.get("pubyear")
+
+                # Extract all EMDB IDs associated with this record
+                identifiers = rec.get("identifiers", [])
+                for ident in identifiers:
+                    if ident.get("identifier_type") == "emdb_id":
+                        emdb_id = ident.get("identifier")
+                        if emdb_id:
+                            meta_map[emdb_id] = pub_year
+
+            except json.JSONDecodeError:
+                continue
+
+    print(f"Loaded {len(meta_map)} unique EMDB identifiers.")
+    return meta_map
