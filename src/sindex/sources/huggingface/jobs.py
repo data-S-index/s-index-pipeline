@@ -88,7 +88,7 @@ def find_mentions_hf_modelcard_refs(db_path, input_ndjson, output_ndjson):
                         rec["placeholder_year"] = True
 
                     f.write(orjson.dumps(rec) + b"\n")
-                    total_lines_saved += 1  # <--- Increment Counter
+                    total_lines_saved += 1
 
         print(f"Done! Saved {total_lines_saved} lines to {output_ndjson}")
 

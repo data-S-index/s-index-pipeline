@@ -478,8 +478,7 @@ def datacite_citations_block_to_records_unified(
             if is_realistic_integer_year(citation_year_raw):
                 citation_year = citation_year_raw
 
-        # 3. WEIGHT LOGIC: Reverted to original style
-        # Since citation_weight handles None, we just pass it in.
+        # 3. Weight and date
         rec["citation_weight"] = citation_weight_year(dataset_pubyear, citation_year)
         if citation_date:
             rec["citation_date"] = citation_date

@@ -5,9 +5,15 @@ from typing import Any
 
 import requests
 
-from sindex.core.dates import _norm_date_iso
-from sindex.core.ids import _norm_doi
-from sindex.metrics.weights import mention_weight
+from sindex.core.dates import (
+    _DEFAULT_CIT_MEN_DATE,
+    _DEFAULT_CIT_MEN_YEAR,
+    _norm_date_iso,
+    get_realistic_date,
+    is_realistic_integer_year,
+)
+from sindex.core.ids import _norm_dataset_id
+from sindex.metrics.weights import mention_weight_year
 from sindex.sources.github.client import get_repo_meta, search_code
 from sindex.sources.github.constants import (
     DEFAULT_MAX_PAGES,
@@ -19,7 +25,7 @@ from sindex.sources.github.constants import (
 def find_github_mentions_for_dataset_id(
     dataset_id: str,
     *,
-    dataset_pub_date: str | None = None,
+    dataset_pubyear: int | None = None,
     max_pages: int = DEFAULT_MAX_PAGES,
     include_forks: bool = False,
     session: requests.Session | None = None,
@@ -53,11 +59,7 @@ def find_github_mentions_for_dataset_id(
             }
     """
 
-    doi_id = _norm_doi(dataset_id)
-    if doi_id:
-        search_term = doi_id
-    else:
-        search_term = dataset_id.lower()
+    search_term = _norm_dataset_id(dataset_id)
     query = f'"{search_term}" in:file filename:README'
     items = search_code(query, max_pages=max_pages, session=session, token=token)
     if not items:
@@ -91,12 +93,13 @@ def find_github_mentions_for_dataset_id(
         if not include_forks and meta.get("fork"):
             continue
 
-        created_raw = meta.get("created_at")
+        m_date_raw = meta.get("created_at")
         mention_date = None
-        if created_raw:
+        if m_date_raw:
             try:
-                mention_date = _norm_date_iso(created_raw)
-            except ValueError:
+                norm_iso_date = _norm_date_iso(str(m_date_raw))
+                mention_date = get_realistic_date(norm_iso_date)
+            except (ValueError, TypeError):
                 mention_date = None
 
         repos_with_mentions[full_name] = {
@@ -107,16 +110,37 @@ def find_github_mentions_for_dataset_id(
     results: list[dict] = []
     for full_name in sorted(repos_with_mentions.keys()):
         info = repos_with_mentions[full_name]
-        mention_dt = info.get("mention_date")
+        mention_date = info.get("mention_date")
 
-        entry = {
+        if mention_date:
+            m_year_raw = int(mention_date[:4])
+        else:
+            m_year_raw = None
+        mention_year = None
+        if is_realistic_integer_year(m_year_raw):
+            mention_year = m_year_raw
+
+        rec = {
             "dataset_id": dataset_id,
             "source": ["github"],
             "mention_link": info["repo_link"],
-            "mention_weight": mention_weight(dataset_pub_date, mention_dt),
+            "mention_weight": mention_weight_year(dataset_pubyear, mention_year),
         }
-        if mention_dt:
-            entry["mention_date"] = mention_dt
-        results.append(entry)
+
+        if mention_date:
+            rec["mention_date"] = mention_date
+            rec["placeholder_date"] = False
+        else:
+            rec["mention_date"] = _DEFAULT_CIT_MEN_DATE
+            rec["placeholder_date"] = True
+
+        if mention_year:
+            rec["mention_year"] = mention_year
+            rec["placeholder_year"] = False
+        else:
+            rec["mention_year"] = _DEFAULT_CIT_MEN_YEAR
+            rec["placeholder_year"] = True
+
+        results.append(rec)
 
     return results

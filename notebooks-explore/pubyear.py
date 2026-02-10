@@ -1,13 +1,12 @@
 import csv
 import glob
-import json  # Standard json for writing final files
+import json
 import os
 import sys
 import time
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-# Try to import orjson for speed (reading), fallback to standard json
 try:
     import orjson
 except ImportError:
@@ -22,13 +21,11 @@ def process_file(filepath):
     """
     local_stats = {
         "total_records": 0,
-        
         # Presence Counts
         "count_has_pubyear": 0,
         "count_has_publication_year": 0,
         "count_has_published": 0,
         "count_has_doi_created_date": 0,
-        
         # Year Distributions
         "pubyear_years": Counter(),
         "publication_year_years": Counter(),
@@ -117,7 +114,6 @@ def analyze_json_files(folder_path, output_dir="."):
         "count_has_publication_year": 0,
         "count_has_published": 0,
         "count_has_doi_created_date": 0,
-        
         "pubyear_years": Counter(),
         "publication_year_years": Counter(),
         "published_years": Counter(),
@@ -135,17 +131,25 @@ def analyze_json_files(folder_path, output_dir="."):
                 res = future.result()
                 # Aggregate results
                 total_stats["total_records"] += res["total_records"]
-                
+
                 total_stats["count_has_pubyear"] += res["count_has_pubyear"]
-                total_stats["count_has_publication_year"] += res["count_has_publication_year"]
+                total_stats["count_has_publication_year"] += res[
+                    "count_has_publication_year"
+                ]
                 total_stats["count_has_published"] += res["count_has_published"]
-                total_stats["count_has_doi_created_date"] += res["count_has_doi_created_date"]
-                
+                total_stats["count_has_doi_created_date"] += res[
+                    "count_has_doi_created_date"
+                ]
+
                 total_stats["pubyear_years"].update(res["pubyear_years"])
-                total_stats["publication_year_years"].update(res["publication_year_years"])
+                total_stats["publication_year_years"].update(
+                    res["publication_year_years"]
+                )
                 total_stats["published_years"].update(res["published_years"])
-                total_stats["doi_created_date_years"].update(res["doi_created_date_years"])
-                
+                total_stats["doi_created_date_years"].update(
+                    res["doi_created_date_years"]
+                )
+
             except Exception as e:
                 print(f"\nWorker error: {e}")
 
@@ -165,7 +169,7 @@ def analyze_json_files(folder_path, output_dir="."):
         csv_path = os.path.join(output_dir, filename)
         # Sort by Year (earliest first)
         sorted_data = sorted(counter_obj.items(), key=lambda x: x[0])
-        
+
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["Year", "Count"])
@@ -174,25 +178,26 @@ def analyze_json_files(folder_path, output_dir="."):
 
     # 1. pubyear
     write_csv("pubyear_count.csv", total_stats["pubyear_years"])
-    
+
     # 2. publication_year
     write_csv("publication_year_count.csv", total_stats["publication_year_years"])
-    
+
     # 3. published
     write_csv("published_per_year_count.csv", total_stats["published_years"])
-    
+
     # 4. doi_created_date
-    write_csv("doi_created_date_per_year_count.csv", total_stats["doi_created_date_years"])
+    write_csv(
+        "doi_created_date_per_year_count.csv", total_stats["doi_created_date_years"]
+    )
 
     # --- SUMMARY PRINT ---
     print("\n--- Summary ---")
     print(f"Total Records Scanned: {total_stats['total_records']:,}")
     print(f"Records with 'pubyear':          {total_stats['count_has_pubyear']:,}")
-    print(f"Records with 'publication_year': {total_stats['count_has_publication_year']:,}")
+    print(
+        f"Records with 'publication_year': {total_stats['count_has_publication_year']:,}"
+    )
     print(f"Records with 'published':        {total_stats['count_has_published']:,}")
-    print(f"Records with 'doi_created_date': {total_stats['count_has_doi_created_date']:,}")
-
-if __name__ == '__main__':
-    # REPLACE WITH YOUR FOLDER PATH
-    folder_path = r"D:\pipeline-data\records\slim-records"
-    analyze_json_files(folder_path, output_dir="results")
+    print(
+        f"Records with 'doi_created_date': {total_stats['count_has_doi_created_date']:,}"
+    )

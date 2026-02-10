@@ -699,7 +699,7 @@ def create_oa_pubdate_table(
     reset_tables=False,
 ):
     """
-    Scans your custom metadata parquet files and loads oa_id, doi, and pub_date.
+    Scans metadata parquet files and loads oa_id, doi, and pub_date.
     Simplified version focusing on raw date strings.
     """
     start_time = time.time()
@@ -756,7 +756,7 @@ def create_oa_pubdate_table(
             clean_file_path = file_path.replace("\\", "/")
             con.execute("BEGIN TRANSACTION")
             try:
-                # Direct mapping from your specific Parquet schema
+                # Direct mapping from specific Parquet schema
                 con.execute(f"""
                     INSERT INTO openalex_pubdate
                     SELECT 

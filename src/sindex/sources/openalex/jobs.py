@@ -6,7 +6,8 @@ from typing import Dict, List, Optional
 
 import requests
 
-from sindex.core.dates import _norm_date_iso, get_realistic_date
+from sindex.core.dates import is_realistic_integer_year
+from sindex.core.ids import _norm_doi
 
 from .client import make_openalex_session
 from .discovery import (
@@ -20,7 +21,7 @@ from .normalize import openalex_citing_works_to_citations
 def find_citations_oa(
     doi: str,
     *,
-    dataset_pub_date: str | None = None,
+    dataset_pubyear: int | None = None,
     email: Optional[str] = None,
     session: Optional[requests.Session] = None,
     api_key: Optional[str] = None,
@@ -31,16 +32,16 @@ def find_citations_oa(
       - discovery: OA id -> citing works (raw)
       - normalize: citing works -> citation objects
     """
-    if dataset_pub_date:
-        try:
-            dataset_pub_date = _norm_date_iso(dataset_pub_date)
-            dataset_pub_date = get_realistic_date(dataset_pub_date)
-        except ValueError:
-            dataset_pub_date = None
+    target_doi = _norm_doi(doi)
+    if not target_doi:
+        return []
+
+    if not is_realistic_integer_year(dataset_pubyear):
+        dataset_pubyear = None
 
     s = session or make_openalex_session(api_key=api_key)
 
-    record = get_openalex_doi_record(doi, session=s, mailto=email)
+    record = get_openalex_doi_record(target_doi, session=s, mailto=email)
     if not record:
         return []
 
@@ -56,7 +57,7 @@ def find_citations_oa(
     return openalex_citing_works_to_citations(
         citing_records,
         dataset_id=doi,
-        dataset_pub_date=dataset_pub_date,
+        dataset_pubyear=dataset_pubyear,
     )
 
 

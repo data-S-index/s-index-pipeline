@@ -130,7 +130,7 @@ def slim_emdb_record(metadata: dict) -> dict:
                     creators_slim.append(c_slim)
                     continue
 
-                # Case 2: Author is a dict → your existing logic
+                # Case 2: Author is a dict
                 if isinstance(c, dict):
                     c_slim = {}
 

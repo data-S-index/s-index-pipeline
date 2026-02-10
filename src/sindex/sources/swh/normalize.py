@@ -30,7 +30,7 @@ def enrich_swh_base_mentions(db_path, input_ndjson, output_ndjson):
             try_cast(year(try_cast(r.mention_date AS TIMESTAMP)) AS INTEGER) as raw_year
         FROM read_ndjson_auto('{input_ndjson}') r
         INNER JOIN my_datasets d
-            -- Normalize the input ID just in case to ensure it matches your DB keys
+            -- Normalize the input ID just in case 
             ON d.dataset_id = py_norm_id(r.dataset_id)
     """
 

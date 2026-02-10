@@ -2,6 +2,7 @@ import csv
 import glob
 import json
 import os
+import re
 
 
 def enhance_topics(ndjson_path, csv_path, output_path, limit=None):
@@ -26,7 +27,7 @@ def enhance_topics(ndjson_path, csv_path, output_path, limit=None):
                     continue  # Skip empty rows
 
                 # STANDARDIZE ID: Ensure it starts with "T"
-                # If CSV has "10001", this makes it "T10001" to match your JSON
+                # If CSV has "10001", this makes it "T10001" to match JSON
                 key_id = f"T{raw_id}" if not raw_id.startswith("T") else raw_id
 
                 # Prepare the data payload
@@ -148,3 +149,40 @@ def restructure_topics_ndjson(input_folder, output_file):
     print("\nProcessing complete")
     print(f"Total files processed: {total_files}")
     print(f"Total lines in output: {total_lines:,}")
+
+
+def get_subfield_id_from_topic_id(file_path: str, topic_id: str | int) -> str | None:
+    # Normalize topic_id: remove 'T' e.g., "T10001" -> "10001"
+    normalized_id = re.sub(r"\D", "", str(topic_id))
+
+    with open(file_path, mode="r", encoding="utf-8-sig") as f:
+        # We use utf-8-sig to automatically handle hidden BOM characters
+
+        # Sniff the delimiter automatically if you aren't 100% sure it's tabs
+        content = f.read(2048)
+        f.seek(0)
+        try:
+            dialect = csv.Sniffer().sniff(content)
+            reader = csv.DictReader(f, dialect=dialect)
+        except csv.Error:
+            # Fallback to tab if sniffer fails
+            reader = csv.DictReader(f, delimiter="\t")
+
+        # 2. Normalize headers (remove whitespace) to prevent KeyError
+        reader.fieldnames = (
+            [name.strip() for name in reader.fieldnames] if reader.fieldnames else []
+        )
+
+        # Verify the column exists after normalization
+        if "topic_id" not in reader.fieldnames:
+            available = ", ".join(reader.fieldnames)
+            raise KeyError(
+                f"Column 'topic_id' not found. Available columns: {available}"
+            )
+
+        for row in reader:
+            # 3. Compare normalized values
+            if row["topic_id"] and row["topic_id"].strip() == normalized_id:
+                return str(row["subfield_id"]).strip()
+
+    return None

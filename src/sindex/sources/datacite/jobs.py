@@ -772,7 +772,6 @@ def lookup_dates_in_oa_snapshot(db_path: str, input_parquet: str, output_parquet
     # Ensure output directory exists
     os.makedirs(os.path.dirname(output_parquet), exist_ok=True)
 
-    # Connect to your existing database
     con = duckdb.connect(db_path, read_only=True)
 
     try:
