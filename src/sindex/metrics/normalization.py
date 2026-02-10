@@ -176,3 +176,60 @@ def get_topic_year_norm_factors(
         f"No normalization factors found in {table} for "
         f"topic={topic_id!r}, year={year!r}"
     )
+
+
+def get_subfield_year_norm_factors(db_path, subfield_id, pubyear):
+    """
+    Returns a dictionary of normalization factors for a given subfield_id (str) and pubyear (int)
+    """
+    query = """
+    SELECT 
+        -- 1. Scores (Prioritize Specific 'ns', fallback to 'ns_def')
+        COALESCE(ns.median_fair_score_3yr, ns_def.median_fair_score_3yr) as FT,
+        COALESCE(ns.median_cit_weight_3yr, ns_def.median_cit_weight_3yr) as CTw,
+        COALESCE(ns.median_men_weight_3yr, ns_def.median_men_weight_3yr) as MTw,
+
+        -- 2. Year Gap (Calculated exactly like: m.pubyear - ns.pubyear)
+        -- Returns None (NULL) if we fell back to Default
+        (? - ns.pubyear) as n_year_gap,
+
+        -- 3. Method String
+        CASE 
+            WHEN ns.subfield_id IS NULL THEN 'Default'
+            WHEN ? = ns.pubyear THEN 'Exact Year'
+            ELSE 'Closest Past Year'
+        END as method
+
+    FROM (SELECT 1) -- Dummy anchor
+    
+    -- Simulate the ASOF JOIN (Specific Subfield)
+    LEFT JOIN (
+        SELECT * FROM normalization_factors_subfields_floored 
+        WHERE subfield_id = ? 
+          AND pubyear <= ? 
+        ORDER BY pubyear DESC 
+        LIMIT 1
+    ) ns ON true
+    
+    -- Join the Default Fallback
+    LEFT JOIN (
+        SELECT * FROM normalization_factors_subfields_floored 
+        WHERE subfield_id = 'DEFAULT'
+    ) ns_def ON true
+    """
+
+    params = [pubyear, pubyear, subfield_id, pubyear]
+
+    with duckdb.connect(db_path) as con:
+        result = con.execute(query, params).fetchone()
+
+        if not result:
+            return None
+
+        return {
+            "FT": result[0],
+            "CTw": result[1],
+            "MTw": result[2],
+            "n_year_gap": result[3],
+            "method": result[4],
+        }

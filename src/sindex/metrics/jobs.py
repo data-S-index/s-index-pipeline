@@ -1,14 +1,15 @@
-import os
-
-import duckdb
-
-from sindex.core.dates import _norm_date_iso, _to_datetime_utc, get_best_dataset_date
+from sindex.core.dates import is_realistic_integer_year
 from sindex.core.http import _is_reachable, is_url
 from sindex.core.ids import _norm_dataset_id, _norm_doi, _norm_doi_url, is_working_doi
 from sindex.metrics.citations import merge_citations_dicts
-from sindex.metrics.datasetindex import dataset_index_timeseries
+from sindex.metrics.datasetindex import (
+    dataset_index_year_timeseries,
+)
 from sindex.metrics.mentions import merge_mentions_dicts
-from sindex.metrics.normalization import get_topic_year_norm_factors
+from sindex.metrics.normalization import (
+    get_subfield_year_norm_factors,
+)
+from sindex.metrics.topics import get_subfield_id_from_topic_id
 from sindex.sources.datacite.discovery import get_datacite_doi_record
 from sindex.sources.datacite.jobs import find_citations_dc_from_citation_block
 from sindex.sources.datacite.normalize import slim_datacite_record
@@ -19,18 +20,17 @@ from sindex.sources.openalex.jobs import find_citations_oa, get_primary_topic_fo
 
 
 def default_mdc_db_path():
-    current_dir = os.getcwd()
-    parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir))
-    mdc_path = os.path.join(parent_dir, "input", "mdc")
-    db_path = os.path.join(mdc_path, "mdc_index.duckdb")
+    db_path = r"D:\pipeline-data\external\mdc-corpus\mdc_index.duckdb"
     return db_path
 
 
 def default_norm_db_path():
-    current_dir = os.getcwd()
-    parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir))
-    norm_path = os.path.join(parent_dir, "input", "mock_norm")
-    db_path = os.path.join(norm_path, "mock_norm.duckdb")
+    db_path = "input/subfield_norm_factors.duckdb"
+    return db_path
+
+
+def topics_table_path():
+    db_path = "input/openalex_topic_mapping_table.csv"
     return db_path
 
 
@@ -55,32 +55,31 @@ def dataset_index_series_from_doi(doi):
     if not rec:
         # Happens if DOI is valid but not found in DataCite (e.g. DOI of a manuscript)
         slim = None
-        pubdate = None
         pubyear = None
         citations_block = None
     else:
         slim = slim_datacite_record(rec)
-        publication_date = slim.get("publication_date")
-        created_date = slim.get("created_date")
-        pubdate = get_best_dataset_date(publication_date, created_date)
-        if pubdate:
-            pub_dt = _to_datetime_utc(pubdate)
-            pubyear = pub_dt.year if pub_dt else None
-        else:
-            pubyear = None
+        pubyear = slim.get("pubyear")
         citations_block = slim.get("citations")
 
     dataset_report["metadata"] = slim
 
     # Get domain (OpenAlex topic)
     topic_result = get_primary_topic_for_doi(norm_doi)
+    # if not topic_result:
+    #    topic_result = custom_model(norm_doi) #add Jamey's model here
 
-    topic_id = None
+    subfield_id = None
     dataset_report["topic"] = None
 
-    if topic_result and topic_result.get("topic_score", 0.0) > 0.5:
-        dataset_report["topic"] = topic_result
-        topic_id = topic_result.get("topic_id")
+    if topic_result:
+        try:
+            topic_id = topic_result.get("topic_id")
+            subfield_id = get_subfield_id_from_topic_id(topics_table_path(), topic_id)
+            topic_result["subfield_id"] = subfield_id
+            dataset_report["topic"] = topic_result
+        except Exception:
+            pass
 
     # Get F-UJI FAIR score
     fair_report = fair_evaluation_report(norm_doi_url)
@@ -96,18 +95,18 @@ def dataset_index_series_from_doi(doi):
     # Citations
     citations_list = []
     citations_mdc = find_citations_mdc_duckdb(
-        doi, dataset_pub_date=pubdate, db_path=default_mdc_db_path()
+        doi, dataset_pubyear=pubyear, db_path=default_mdc_db_path()
     )
     if citations_mdc:
         citations_list.append(citations_mdc)
 
-    citations_oa = find_citations_oa(doi, dataset_pub_date=pubdate)
+    citations_oa = find_citations_oa(doi, dataset_pubyear=pubyear)
     if citations_oa:
         citations_list.append(citations_oa)
 
     if citations_block:
         citations_dc = find_citations_dc_from_citation_block(
-            doi, citations_block, dataset_pub_date=pubdate
+            doi, citations_block, dataset_pubyear=pubyear
         )
         if citations_dc:
             citations_list.append(citations_dc)
@@ -117,7 +116,7 @@ def dataset_index_series_from_doi(doi):
 
     # Mentions
     mentions_list = []
-    mentions_github = find_github_mentions_for_dataset_id(doi, dataset_pub_date=pubdate)
+    mentions_github = find_github_mentions_for_dataset_id(doi, dataset_pubyear=pubyear)
     if mentions_github:
         mentions_list.append(mentions_github)
 
@@ -129,30 +128,26 @@ def dataset_index_series_from_doi(doi):
 
     # Normalization factors
     try:
-        with duckdb.connect(default_norm_db_path()) as con:
-            norm = get_topic_year_norm_factors(
-                con,
-                topic_id=topic_id,
-                year=pubyear,
-                table="topic_norm_factors_mock",
-            )
+        norm = get_subfield_year_norm_factors(
+            default_norm_db_path(), subfield_id=subfield_id, pubyear=pubyear
+        )
     except KeyError:
         norm = None
 
     dataset_report["normalization_factors"] = norm
 
     # Dataset Index series
-    Fi = (float(fair_score) / 100.0) if fair_score is not None else 0.0
+    Fi = fair_score if fair_score is not None else 0.0
 
-    FT = norm["FT"] if norm else 0.5
+    FT = norm["FT"] if norm else 13.46
     CTw = norm["CTw"] if norm else 1.0
     MTw = norm["MTw"] if norm else 1.0
 
-    dataset_index_series = dataset_index_timeseries(
+    dataset_index_series = dataset_index_year_timeseries(
         Fi=Fi,
         citations=citations,
         mentions=mentions,
-        pubdate=pubdate,
+        pubyear=pubyear,
         FT=FT,
         CTw=CTw,
         MTw=MTw,
@@ -170,8 +165,9 @@ def dataset_index_series_from_url(
     url: str,
     *,
     identifier: str | None = None,
-    pubdate: str | None = None,
-    topic_id: str | None = None,
+    pubyear: int | None = None,
+    subfield_id: str | None = None,
+    subfield_name: str | None = None,
 ) -> dict:
     """
     Build a dataset_report starting from a URL (not a DOI).
@@ -181,16 +177,6 @@ def dataset_index_series_from_url(
       - get_primary_topic_for_doi
       - find_citations_oa
       - find_citations_dc_from_citation_block
-
-    Args:
-        url: Required dataset landing page URL.
-        identifier: Optional dataset identifier to use for MDC/GitHub searches
-                    (if omitted, we only use the URL as the identifier).
-        pubdate: Optional publication date in any reasonable format; normalized to ISO if provided.
-        topic_id: Optional OpenAlex topic id (e.g. "https://openalex.org/T12345" or "T12345").
-
-    Returns:
-        dataset_report dict with citations/mentions + normalization + dataset_index_series.
     """
     # Validate URL
     if not isinstance(url, str) or not url.strip():
@@ -217,18 +203,19 @@ def dataset_index_series_from_url(
     dataset_report["norm_identifier"] = norm_identifier
 
     # Non metadata, resolve pubdate
-    if pubdate:
-        try:
-            pubdate = _norm_date_iso(pubdate)
-        except ValueError as e:
-            raise ValueError(f"Invalid pubdate '{pubdate}': {e}") from e
-    pub_dt = _to_datetime_utc(pubdate)
-    pubyear = pub_dt.year if pub_dt else None
+    if not is_realistic_integer_year(pubyear):
+        pubyear = None
 
     dataset_report["metadata"] = None
 
     # Domain (OpenALex topic)
-    dataset_report["topic"] = topic_id
+    if subfield_id:
+        topic_obj = {"subfield_id": subfield_id}
+        if subfield_name:
+            topic_obj["subfield_name"] = subfield_name
+        dataset_report["topic"] = topic_obj
+    else:
+        dataset_report["topic"] = None
 
     # Get F-UJI FAIR score
     fair_report = fair_evaluation_report(url)
@@ -245,7 +232,7 @@ def dataset_index_series_from_url(
     citations_list: list[list[dict]] = []
 
     citations_mdc = find_citations_mdc_duckdb(
-        url, dataset_pub_date=pubdate, db_path=default_mdc_db_path()
+        url, dataset_pubyear=pubyear, db_path=default_mdc_db_path()
     )
     if citations_mdc:
         citations_list.append(citations_mdc)
@@ -258,7 +245,7 @@ def dataset_index_series_from_url(
 
     mentions_github = find_github_mentions_for_dataset_id(
         url,
-        dataset_pub_date=pubdate,
+        dataset_pubyear=pubyear,
     )
     if mentions_github:
         mentions_list.append(mentions_github)
@@ -268,30 +255,26 @@ def dataset_index_series_from_url(
 
     # 7) Normalization factors
     try:
-        with duckdb.connect(default_norm_db_path()) as con:
-            norm = get_topic_year_norm_factors(
-                con,
-                topic_id=topic_id,
-                year=pubyear,
-                table="topic_norm_factors_mock",
-            )
+        norm = get_subfield_year_norm_factors(
+            default_norm_db_path(), subfield_id=subfield_id, pubyear=pubyear
+        )
     except KeyError:
         norm = None
 
     dataset_report["normalization_factors"] = norm
 
     # Dataset Index series
-    Fi = (float(fair_score) / 100.0) if fair_score is not None else 0.0
+    Fi = fair_score if fair_score is not None else 0.0
 
-    FT = norm["FT"] if norm else 0.5
+    FT = norm["FT"] if norm else 13.46
     CTw = norm["CTw"] if norm else 1.0
     MTw = norm["MTw"] if norm else 1.0
 
-    dataset_index_series = dataset_index_timeseries(
+    dataset_index_series = dataset_index_year_timeseries(
         Fi=Fi,
         citations=citations,
         mentions=mentions,
-        pubdate=pubdate,
+        pubyear=pubyear,
         FT=FT,
         CTw=CTw,
         MTw=MTw,

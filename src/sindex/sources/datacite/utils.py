@@ -1,37 +1,23 @@
+import json
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 
 import duckdb
 
-from sindex.core.dates import _norm_date_iso
-
-
-def get_best_publication_date_datacite_record(attr):
-    candidates = []
-
-    # Extract "Issued" date - this seems most likely to be the date a dataset was published
-    for d in attr.get("dates", []):
-        if d.get("dateType") == "Issued" and d.get("date"):
-            candidates.append(str(d.get("date")))
-            break
-
-    # Add other fallbacks to the candidate list
-    candidates.append(attr.get("published"))
-    candidates.append(attr.get("publicationYear"))
-
-    # Iterate through candidates and return the first one that normalizes
-    for candidate in candidates:
-        if not candidate:
-            continue
-        try:
-            return _norm_date_iso(str(candidate))
-        except (ValueError, TypeError):
-            continue  # Try the next candidate if normalization fails
+from sindex.core.dates import (
+    _DEFAULT_CIT_MEN_DATE,
+    _DEFAULT_CIT_MEN_YEAR,
+    _norm_date_iso,
+    get_realistic_date,
+    is_realistic_integer_year,
+)
+from sindex.metrics.weights import citation_weight_year
 
 
 def get_relevant_citations_block_from_ndjson(
-    db_path, ndjson_folder, target_table, output_file_path, reset_log=False
+    db_path, ndjson_folder, target_table, output_file_path, reset_log=True
 ):
     output_dir = os.path.dirname(output_file_path)
     if output_dir:
@@ -41,6 +27,7 @@ def get_relevant_citations_block_from_ndjson(
 
     con.execute("SET temp_directory = './duckdb_temp/'")
     con.execute("SET max_memory = '8GB'")
+    con.execute("PRAGMA enable_progress_bar")
 
     if reset_log:
         con.execute("DROP TABLE IF EXISTS processed_files_citation_blocks")
@@ -84,15 +71,13 @@ def get_relevant_citations_block_from_ndjson(
             SELECT 
                 A.identifiers, 
                 A.citations,
-                A.publication_date,
-                A.created_date
+                A.pubyear
             FROM read_ndjson_auto(
                 {new_files}, 
                 columns={{
                     'identifiers': 'JSON[]', 
                     'citations': 'JSON', 
-                    'publication_date': 'VARCHAR', 
-                    'created_date': 'VARCHAR'
+                    'pubyear': 'INTEGER'
                 }}
             ) AS A
             INNER JOIN {target_table} AS B 
@@ -128,3 +113,84 @@ def get_relevant_citations_block_from_ndjson(
     finally:
         con.execute("DROP TABLE IF EXISTS batch_results")
         con.close()
+
+
+def dc_citations_date_to_year(db_path, input_ndjson, output_ndjson):
+    """
+    Joins an citation NDJSON file with dataset DuckDB table to add publication years,
+    then processes citation dates and year based weights.
+    """
+    con = duckdb.connect(db_path)
+
+    query = """
+        SELECT 
+            f.dataset_id,
+            t.pubyear,
+            f.citation_link,
+            CAST(date_part('year', TRY_CAST(f.citation_date AS TIMESTAMP)) AS INTEGER) as c_year,
+            f.citation_date
+        FROM read_json_auto(?) f
+        INNER JOIN my_datasets t ON f.dataset_id = t.dataset_id
+    """
+
+    print(f"Starting DuckDB Join on {input_ndjson}")
+    start_time = time.time()
+
+    results = con.execute(query, [input_ndjson])
+
+    count = 0
+    with open(output_ndjson, "w", encoding="utf-8") as f_out:
+        while True:
+            chunk = results.fetchmany(100000)
+            if not chunk:
+                break
+
+            for row in chunk:
+                best_id, pubyear, c_link, c_year, c_date_raw = row
+                dataset_pubyear = pubyear
+
+                citation_date = None
+                if c_date_raw:
+                    try:
+                        norm_iso_date = _norm_date_iso(str(c_date_raw))
+                        citation_date = get_realistic_date(norm_iso_date)
+                    except (ValueError, TypeError):
+                        citation_date = None
+
+                citation_year = None
+                if is_realistic_integer_year(c_year):
+                    citation_year = c_year
+
+                rec = {
+                    "dataset_id": best_id,
+                    "source": ["datacite"],
+                    "citation_link": c_link,
+                    "citation_weight": citation_weight_year(
+                        dataset_pubyear, citation_year
+                    ),
+                }
+
+                if citation_date:
+                    rec["citation_date"] = citation_date
+                    rec["placeholder_date"] = False
+                else:
+                    rec["citation_date"] = _DEFAULT_CIT_MEN_DATE
+                    rec["placeholder_date"] = True
+
+                if citation_year:
+                    rec["citation_year"] = citation_year
+                    rec["placeholder_year"] = False
+                else:
+                    rec["citation_year"] = _DEFAULT_CIT_MEN_YEAR
+                    rec["placeholder_year"] = True
+
+                f_out.write(json.dumps(rec) + "\n")
+                count += 1
+
+            # Progress update
+            elapsed = time.time() - start_time
+            print(f"\rCitations matched: {count:,} | Elapsed: {elapsed:.2f}s", end="")
+
+    print(f"\nProcessing complete. Output saved to {output_ndjson}")
+    print(f"Total citations matched: {count:,}")
+    con.close()

@@ -6,7 +6,11 @@ from typing import List, Optional
 
 import requests
 
-from sindex.core.dates import _norm_date_iso, get_realistic_date
+from sindex.core.dates import (
+    _norm_date_iso,
+    get_realistic_date,
+    is_realistic_integer_year,
+)
 from sindex.core.ids import _norm_doi_url
 
 from .client import get_openalex_record, make_openalex_session
@@ -123,5 +127,51 @@ def fetch_openalex_pubdate(doi: str, session: requests.Session | None = None) ->
         except Exception:
             # Move to the next candidate
             continue
+
+    return None
+
+
+def fetch_openalex_pubyear(
+    doi: str, session: requests.Session | None = None
+) -> int | None:
+    """
+    Fetch the publication year for a DOI from OpenAlex as a validated 4-digit integer.
+
+    Args:
+        doi: DOI identifier or DOI URL.
+        session: Optional shared `requests.Session`.
+
+    Returns:
+        int (valid 4-digit year) or None.
+    """
+    data = get_openalex_doi_record(doi, session=session)
+    if not data:
+        return None
+
+    # Priority 1: Check the 'publication_year' int field
+    raw_year = data.get("publication_year")
+
+    try:
+        if raw_year is not None:
+            pubyear = int(raw_year)
+            if is_realistic_integer_year(pubyear):
+                return pubyear
+    except (ValueError, TypeError):
+        # Continue to Priority 2 if conversion fails
+        pass
+
+    # Priority 2: Fallback to extracting year from 'publication_date' string
+    pub_date = data.get("publication_date")
+
+    if pub_date and isinstance(pub_date, str) and len(pub_date) >= 4:
+        try:
+            # Extract first 4 chars and try to convert to int
+            pubyear = int(pub_date[:4])
+
+            if is_realistic_integer_year(pubyear):
+                return pubyear
+
+        except (ValueError, TypeError):
+            pass
 
     return None

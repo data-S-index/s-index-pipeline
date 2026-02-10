@@ -3,10 +3,16 @@ import os
 import time
 from typing import Any, Dict, List
 
-from sindex.core.dates import _norm_date_iso, get_best_dataset_date, get_realistic_date
+from sindex.core.dates import (
+    _DEFAULT_CIT_MEN_DATE,
+    _DEFAULT_CIT_MEN_YEAR,
+    _norm_date_iso,
+    get_realistic_date,
+    is_realistic_integer_year,
+)
 from sindex.core.ids import _norm_dataset_id
 from sindex.metrics.dedup import dedupe_citations_by_link
-from sindex.metrics.weights import citation_weight
+from sindex.metrics.weights import citation_weight_year
 
 from .client import make_duckdb_conn, register_mdc_udfs
 from .constants import DEFAULT_DB_PATH, DEFAULT_MDC_PATTERN
@@ -38,7 +44,8 @@ def build_mdc_index(
         SELECT
             norm_dataset_id(dataset) AS dataset_norm,
             norm_doi_url_or_raw(publication) AS citation_link,
-            norm_date_iso_safe(publishedDate) AS citation_date
+            norm_date_iso_safe(publishedDate) AS citation_date,
+            EXTRACT(YEAR FROM norm_date_iso_safe(publishedDate)::DATE)::INTEGER AS citation_year
         FROM read_json_auto('{glob_path}')
         WHERE dataset IS NOT NULL
           AND publication IS NOT NULL;
@@ -57,7 +64,8 @@ def build_mdc_index(
         SELECT
             dataset_norm,
             citation_link,
-            any_value(citation_date) AS citation_date
+            any_value(citation_date) AS citation_date,
+            any_value(citation_year) AS citation_year
         FROM mdc_index
         GROUP BY dataset_norm, citation_link;
     """)
@@ -77,33 +85,29 @@ def build_mdc_index(
 def find_citations_mdc_duckdb(
     target_id: str,
     *,
-    dataset_pub_date: str | None = None,
+    dataset_pubyear: int | None = None,
     db_path: str = DEFAULT_DB_PATH,
 ) -> List[Dict[str, Any]]:
     target_norm = _norm_dataset_id(target_id)
     if not target_norm:
         return []
 
-    if dataset_pub_date:
-        try:
-            dataset_pub_date = _norm_date_iso(dataset_pub_date)
-            dataset_pub_date = get_realistic_date(dataset_pub_date)
-        except ValueError:
-            dataset_pub_date = None
+    if not is_realistic_integer_year(dataset_pubyear):
+        dataset_pubyear = None
 
     out: List[Dict[str, Any]] = []
 
     with make_duckdb_conn(db_path, read_only=True) as con:
         rows = con.execute(
             """
-            SELECT citation_link, citation_date
+            SELECT citation_link, citation_date, citation_year
             FROM mdc_index
             WHERE dataset_norm = ?
             """,
             [target_norm],
         ).fetchall()
 
-    for citation_link, citation_date_raw in rows:
+    for citation_link, citation_date_raw, citation_year_raw in rows:
         citation_date = None
         if citation_date_raw:
             try:
@@ -111,14 +115,29 @@ def find_citations_mdc_duckdb(
                 citation_date = get_realistic_date(norm_iso_date)
             except ValueError:
                 citation_date = None
+        citation_year = None
+        if is_realistic_integer_year(citation_year_raw):
+            citation_year = citation_year_raw
+
         rec: Dict[str, Any] = {
             "dataset_id": target_id,
             "source": ["mdc"],
             "citation_link": citation_link,
-            "citation_weight": citation_weight(dataset_pub_date, citation_date),
+            "citation_weight": citation_weight_year(dataset_pubyear, citation_year),
         }
         if citation_date:
             rec["citation_date"] = citation_date
+            rec["placeholder_date"] = False
+        else:
+            rec["citation_date"] = _DEFAULT_CIT_MEN_DATE
+            rec["placeholder_date"] = True
+
+        if citation_year:
+            rec["citation_year"] = citation_year
+            rec["placeholder_year"] = False
+        else:
+            rec["citation_year"] = _DEFAULT_CIT_MEN_YEAR
+            rec["placeholder_year"] = True
 
         out.append(rec)
 
@@ -144,7 +163,6 @@ def batch_find_citations_mdc_ducdb_optimized(
 
     # Connect to DuckDB and process
     with make_duckdb_conn(db_path, read_only=True) as con:
-        # Register your Python normalization function so SQL can use it
         con.create_function("_norm_dataset_id", _norm_dataset_id)
 
         # Create temp table with priority ID logic and explicit schema
@@ -156,14 +174,12 @@ def batch_find_citations_mdc_ducdb_optimized(
                  WHERE x.identifier_type = 'doi' LIMIT 1),
                 identifiers[1].identifier
             ) AS best_id,
-            publication_date,
-            created_date
+            pubyear
         FROM read_json_auto(?, 
             ignore_errors=True, 
             columns={
                 'identifiers': 'STRUCT(identifier_type VARCHAR, identifier VARCHAR)[]',
-                'publication_date': 'VARCHAR',
-                'created_date': 'VARCHAR'
+                'pubyear': 'INTEGER'
             }
         )
         WHERE best_id IS NOT NULL;
@@ -174,9 +190,9 @@ def batch_find_citations_mdc_ducdb_optimized(
         results = con.execute("""
             SELECT 
                 i.best_id,
-                i.publication_date,
-                i.created_date,
+                i.pubyear,
                 m.citation_link,
+                m.citation_year,
                 m.citation_date
             FROM input_data i
             JOIN mdc_index m ON (_norm_dataset_id(i.best_id) = m.dataset_norm)
@@ -191,8 +207,8 @@ def batch_find_citations_mdc_ducdb_optimized(
                     break
 
                 for row in chunk:
-                    best_id, pub_d, cre_d, c_link, c_date_raw = row
-                    dataset_date = get_best_dataset_date(pub_d, cre_d)
+                    best_id, pubyear, c_link, c_year, c_date_raw = row
+                    dataset_pubyear = pubyear
 
                     citation_date = None
                     if c_date_raw:
@@ -202,15 +218,32 @@ def batch_find_citations_mdc_ducdb_optimized(
                         except (ValueError, TypeError):
                             citation_date = None
 
+                    citation_year = None
+                    if is_realistic_integer_year(c_year):
+                        citation_year = c_year
+
                     rec = {
                         "dataset_id": best_id,
                         "source": ["mdc"],
                         "citation_link": c_link,
-                        "citation_weight": citation_weight(dataset_date, citation_date),
+                        "citation_weight": citation_weight_year(
+                            dataset_pubyear, citation_year
+                        ),
                     }
 
                     if citation_date:
                         rec["citation_date"] = citation_date
+                        rec["placeholder_date"] = False
+                    else:
+                        rec["citation_date"] = _DEFAULT_CIT_MEN_DATE
+                        rec["placeholder_date"] = True
+
+                    if citation_year:
+                        rec["citation_year"] = citation_year
+                        rec["placeholder_year"] = False
+                    else:
+                        rec["citation_year"] = _DEFAULT_CIT_MEN_YEAR
+                        rec["placeholder_year"] = True
 
                     f_out.write(json.dumps(rec) + "\n")
                     count += 1

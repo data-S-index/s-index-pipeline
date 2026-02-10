@@ -8,7 +8,6 @@ from sindex.core.ids import _norm_doi
 
 from .client import get_datacite_record_by_norm_doi
 from .constants import BASE_API_URL
-from .utils import get_best_publication_date_datacite_record
 
 
 def get_datacite_doi_record(
@@ -115,24 +114,17 @@ def fetch_datacite_pubdate(doi: str, session: requests.Session | None = None) ->
     if not datacite_record:  # None (404 / invalid DOI)
         return None
 
-    attrs = datacite_record.get("attributes") or {}
+    attr = datacite_record.get("attributes") or {}
 
-    # Priority: Use "Best Date" logic (Issued date -> Published date -> Published year)
-    publication_date = get_best_publication_date_datacite_record(attrs)
+    candidates = []
+    candidates.append(attr.get("publicationYear"))
+    candidates.append(attr.get("published"))
+    candidates.append(attr.get("created"))
 
-    if publication_date:
+    # Iterate through candidates and return the first one that normalizes
+    for candidate in candidates:
         try:
-            realistic_date = get_realistic_date(publication_date)
-            if realistic_date:
-                return realistic_date
-        except Exception:
-            pass  # Move on to try created date
-
-    # Try "created" date
-    created_val = attrs.get("created")
-    if created_val:
-        try:
-            norm_iso = _norm_date_iso(created_val)
+            norm_iso = _norm_date_iso(str(candidate))
             realistic_date = get_realistic_date(norm_iso)
             if realistic_date:
                 return realistic_date

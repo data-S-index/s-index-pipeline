@@ -1,7 +1,11 @@
 from datetime import date, datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from dateutil import parser
+
+# Dates to use when citations or mentions date/year are missing
+_DEFAULT_CIT_MEN_DATE = "2026-01-01T00:00:00"
+_DEFAULT_CIT_MEN_YEAR = 2026
 
 
 def _parse_date_strict(iso_str: str) -> date:
@@ -221,3 +225,17 @@ def get_best_dataset_date(
 
     # No realistic dates found
     return None
+
+
+def is_realistic_integer_year(year: Any) -> bool:
+    """
+    Checks if the input is a valid 4-digit integer year
+    between 1950 and the current calendar year.
+    """
+    if not isinstance(year, int):
+        return False
+
+    start_year = 1950
+    current_year = datetime.now().year
+
+    return start_year <= year <= current_year
