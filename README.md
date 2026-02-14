@@ -66,11 +66,16 @@ conda install ipykernel
 
 # Register the kernel
 python -m ipykernel install --user --name=s-index-pipeline
+
+# Close
+conda deactivate s-index-pipeline
 ```
+
 
 ### 5. Launch
 
 ```bash
+# Launch Jupyter lab from your base environment (or any other where it is installed)
 jupyter lab
 ```
 
