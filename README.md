@@ -26,16 +26,17 @@ The repository is organized to separate the core library logic from the executio
 ├── environment.yml         # Conda environment definition
 ├── pyproject.toml          # Build system and dependency configuration
 └── README.md               # Project documentation
+```
 
 ## 🛠️ Installation & Setup
 
-We recommend using **Anaconda** to manage the development environment and **JupyterLab** to run the workflows.
+We recommend using Anaconda to create and manage your development environment and using JupyterLab to run the notebook. All the subsequent instructions are provided assuming you are using [Anaconda (Python 3 version)](https://www.anaconda.com/products/individual) and JupyterLab.
 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/sindex-pipeline.git
-cd s-index-pipelines
+git clone https://github.com/data-S-index/s-index-pipeline.git
+cd s-index-pipeline
 ```
 
 ### 2. Create and activate the environment
@@ -44,7 +45,7 @@ Create the isolated Conda environment using the provided YAML file.
 
 ```bash
 conda env create -f environment.yml
-conda activate s-index-pipelines
+conda activate s-index-pipeline
 ```
 
 ### 3. Install the project in "Editable" mode
@@ -64,14 +65,10 @@ Register the environment so it appears as a kernel option in JupyterLab.
 conda install ipykernel
 
 # Register the kernel
-python -m ipykernel install --user --name=sindex --display-name "Python (sindex)"
+python -m ipykernel install --user --name=s-index-pipeline
 ```
 
-### 5. Download data required for some of the pipelines 
-
-See Sources below and add it to the input folder.
-
-### 6. Launch
+### 5. Launch
 
 ```bash
 jupyter lab
@@ -79,25 +76,27 @@ jupyter lab
 
 ## 🚀 Usage
 
-### Running Production Jobs
-Navigate to the **`notebooks-batch/`** directory.
-* **Harvesting:** Run notebooks like `datacite_harvest.ipynb` or `emdb_harvest.ipynb` to fetch raw data.
-* **Processing:** Run `final_processing.ipynb` to aggregate and normalize the data.
+To run production jobs (large scale), navigate to the **`notebooks-batch/`** directory. E.g., run notebooks like `datacite_harvest.ipynb` or `emdb_harvest.ipynb` to fetch harvest dataset metadata.
 
 ## 🔌 Sources Used
-
-
 
 | Name | Use | Description | Requirements |
 | :--- | :--- | :--- |  :--- |
 | **DataCite** | Metadata Harvest and Citations| Using the [DataCite API](https://support.datacite.org/docs/api) to harvest metadata of datasets with DOIs  | Email (for polite pool) |
-| **EMDB** | Metadata Harvest | Using the Electron Microscopy Data Bank (EMDB) API to harvest the metadata of their datasets as an example of datasets without DOIs. | Email (for polite pool)|
-| **F-UJI** | FAIR scoring | Using [F]-UJI](https://github.com/pangaea-data-publisher/fuji) to calculate FAIR scores of datasets | Follow F-UJI installation instructions |
-| **Make Data Count (MDC)** | Citations | Using the [MDC Dataset Citation Corpus (v4.1)](https://doi.org/10.5281/zenodo.16901115). | Download the JSON format files of the corpus to run the MDC-related pipelines |
+| **EMDB** | Metadata Harvest | Using the [Electron Microscopy Data Bank (EMDB) API](https://www.ebi.ac.uk/emdb/api/) to harvest the metadata of their datasets as an example of datasets without DOIs | Email (for polite pool)|
+| **F-UJI** | FAIR scoring | Using [F-UJI](https://github.com/pangaea-data-publisher/fuji) to calculate FAIR scores of datasets | Follow F-UJI installation instructions |
+| **Make Data Count (MDC)** | Citations | Using the [MDC Dataset Citation Corpus (v4.1)](https://doi.org/10.5281/zenodo.16901115) to find citations to datasets| Download the JSON format files of the corpus to run the MDC-related pipelines |
 | **OpenAlex** | Citations and Date Enrichment| Using the [OpenAlex snapshot](https://docs.openalex.org/download-all-data/openalex-snapshot) to identify citations and publication dates | Download the snapshot to run OpenAlex related pipelines |
 | **Crossref** | Date Enrichment | Using [Crossref API](https://www.crossref.org/documentation/retrieve-metadata/rest-api/) to find publication dates of citing sources | Email (for polite pool) |
 | **Software Heritage (SWH)** | Mentions | Using [Software Heritage Graph Dataset](https://docs.softwareheritage.org/devel/swh-export/graph/) to find mentions of datasets in GitHub READMEs | Follow SWH instruction to use Graph Dataset |
 | **HuggingFace** | Mentions | Using [Hugging Face API](https://huggingface.co/docs/hub/en/api) to find mentions of datasets in model cards | [User Access Token](https://huggingface.co/settings/tokens) |
-| **USPTO** | Mentions | Using [United States Patent and Trademark Office (USPTO) bulk data of granted patents](https://data.uspto.gov/bulkdata/datasets/ptgrxml) to find mentions of datasets. | [API key](https://developer.uspto.gov/faq/tsdr-api-bulk-download) |
+| **USPTO** | Mentions | Using [United States Patent and Trademark Office (USPTO) bulk data of granted patents](https://data.uspto.gov/bulkdata/datasets/ptgrxml) to find mentions of datasets in patents | [API key](https://developer.uspto.gov/faq/tsdr-api-bulk-download) |
 | **GitHub** | Mentions | Using [GitHub API](https://docs.github.com/en/rest) for finding mentions in README (single dataset queries) | [Personal Access Token](https://github.com/settings/tokens) |
+
+## 📜 License
+This work is licensed under
+[MIT](https://opensource.org/licenses/mit). See [LICENSE](LICENSE) for more information.
+
+## 🤝 Feedback and contribution
+Use the [GitHub issues](https://github.com/data-S-index/s-index-pipeline/issues) for submitting feedback or making suggestions. You can also work the repository and submit a pull request with suggestions.
 
