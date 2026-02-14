@@ -11,3 +11,7 @@ notebooks-batch/output/huggingface/models_data_refs.ndjson
 notebooks-batch/output/huggingface/processed_history.txt
 /notebooks-batch/temp_parts
 notebooks-batch/part_1.ndjson
+structure.txt
+/build
+/.virtual_documents
+/anaconda_projects

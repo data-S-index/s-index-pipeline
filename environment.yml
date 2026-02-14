@@ -1,13 +1,59 @@
-name: sindex
+name: s-index-pipeline
 channels:
+  - defaults
   - conda-forge
 dependencies:
-  - python=3.11
+  - python=3.11.14
+  - pip=25.3
+  - wheel=0.45.1
+
+  # Jupyter / IPython stack
+  - ipython=9.7.0
+  - ipykernel=6.31.0
+  - jupyter_client=8.8.0
+  - jupyter_core=5.9.1
+  - traitlets=5.14.3
+
+  # Network 
   - requests=2.32.5
   - urllib3=2.5.0
-  - python-dateutil>=2.9
-  - ijson=3.4.0
-  - tzdata
-  - pip
+
+  - setuptools=80.9.0
+
   - pip:
-      - types-requests
+      # Data
+      - pandas==3.0.0
+      - numpy==2.4.1
+      - scipy==1.17.0
+      - pyarrow==23.0.0
+      - duckdb==1.4.3
+      - networkx==3.6.1
+      - orjson==3.11.5
+      - joblib==1.5.3
+
+      # AI/ML
+      - torch==2.10.0
+      - transformers==4.57.6
+      - sentence-transformers==5.2.0
+      - scikit-learn==1.8.0
+      - huggingface-hub==0.36.0
+      - tokenizers==0.22.2
+      - safetensors==0.7.0
+
+      # Visualization
+      - matplotlib==3.10.8
+      - seaborn==0.13.2
+
+      # Web & APIs
+      - aiohttp==3.13.3
+      - httpx==0.28.1
+      - beautifulsoup4==4.14.3
+
+      # Util
+      - tqdm==4.67.1
+      - python-dateutil==2.9.0.post0
+      - pyyaml==6.0.3
+      - pdfminer.six==20260107
+      - click==8.3.1
+      - typer-slim==0.21.1
+      - fsspec==2026.1.0
