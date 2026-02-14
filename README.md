@@ -1,57 +1,103 @@
-# S-index Python
+# Sindex Data Collection and Processing Pipelines
 
-## About
-This repo contains Python code for collecting the data necessary to compute Dataset-index and S-index.
 
-## Repository Structure
+## ℹ️ About
+
+Python-based pipelines for collecting dataset metadata, calculating FAIR scores, identifying citations, extracting mentions, and computing Dataset Index and S-index. This repository houses the `sindex` source package along with testing and production workflows. We used this code to compute Dataset Index of 49M+ datasets and the S-index of their 1M+ authors as part of our real-world testing and validation. The outputs were included in our NIH S-index Challenge Phase 2 proposal. We refer to the [S-index Hub](https://github.com/data-S-index/hub) for more information about our S-index and the Challenge. This code is under active development as we process more datasets, add more sources for citations and mentions, and so on.
+
+
+## 📂 Project Organization
+
+The repository is organized to separate the core library logic from the execution environments.
 
 ```text
-.
-├── notebooks/           # Jupyter notebooks for testing src code
-├── src/
-│   └── sindex/          # Python code
-│       ├── __init__.py
-│       ├── core         # Core code for normalizing ids, dates, etc.
-│       ├── sources      # Code for harvesting data from sources like DataCite, OpenAlex, GitHub
-        ```
-├── pyproject.toml       # Project configuration 
-└── README.md
-```
+├── input/                  # Data needed to run some of the pipelines (e.g., MDC data)
+├── output/                 # Processed data outputs organized by source
+├── notebooks-batch/        # Notebook to run pipelines for actual data harvesting & processing
+├── notebooks-test/         # Sandbox notebooks for unit testing functions
+├── src/                    # The source code package (sindex)
+│   └── sindex/
+│       ├── config/         # Configuration and settings
+│       ├── core/           # Core utilities (HTTP clients, I/O, ID parsing)
+│       ├── enrich/         # Data enrichment modules
+│       ├── metrics/        # Logic for compiling data to compute Dataset Index and S-index
+│       ├── sources/        # API clients and other code to collect and process data from external sources
+│       └── utils/          # Helper functions
+├── environment.yml         # Conda environment definition
+├── pyproject.toml          # Build system and dependency configuration
+└── README.md               # Project documentation
 
+## 🛠️ Installation & Setup
 
-## Installation & Setup
-
-We recommend using Anaconda to create and manage your development environment and using JupyterLab to run the notebooks. All the subsequent instructions are provided assuming you are using [Anaconda (Python 3 version)](https://www.anaconda.com/products/individual) and JupyterLab.
+We recommend using **Anaconda** to manage the development environment and **JupyterLab** to run the workflows.
 
 ### 1. Clone the repository
 
 ```bash
-git clone sindex-pipeline
-cd sindex-pipeline
+git clone https://github.com/YOUR_USERNAME/sindex-pipeline.git
+cd s-index-pipelines
 ```
 
-### 2. Download Make Data Count (MDC) DB
+### 2. Create and activate the environment
 
-Donwload the DuckDB database created from the MDC corpus [here](https://drive.google.com/file/d/1UOLUw24OL0XPlfYp9SYpa-GAKJUIcRVe/view?usp=sharing) and add it under `input/mdc/`.
+Create the isolated Conda environment using the provided YAML file.
 
-
-### 3. Create and activate conda environment
-
-```sh
-$ conda env create -f environment.yml
+```bash
+conda env create -f environment.yml
+conda activate s-index-pipelines
 ```
 
-### 4. Install the project in editable mode
+### 3. Install the project in "Editable" mode
+
+This installs the `src` folder as a Python package (`sindex`), allowing you to import it in your notebooks while still being able to edit the code.
 
 ```bash
 pip install -e .
 ```
 
-### 5. Setup kernell for Jupyter lab to run the Jupyter notebook
-```sh
-$ conda activate sindex
-$ conda install ipykernel
-$ ipython kernel install --user --name=sindex
-$ conda deactivate
+### 4. Setup Jupyter Kernel
+
+Register the environment so it appears as a kernel option in JupyterLab.
+
+```bash
+# Install ipykernel if not already in environment.yml
+conda install ipykernel
+
+# Register the kernel
+python -m ipykernel install --user --name=sindex --display-name "Python (sindex)"
 ```
+
+### 5. Download data required for some of the pipelines 
+
+See Sources below and add it to the input folder.
+
+### 6. Launch
+
+```bash
+jupyter lab
+```
+
+## 🚀 Usage
+
+### Running Production Jobs
+Navigate to the **`notebooks-batch/`** directory.
+* **Harvesting:** Run notebooks like `datacite_harvest.ipynb` or `emdb_harvest.ipynb` to fetch raw data.
+* **Processing:** Run `final_processing.ipynb` to aggregate and normalize the data.
+
+## 🔌 Sources Used
+
+
+
+| Name | Use | Description | Requirements |
+| :--- | :--- | :--- |  :--- |
+| **DataCite** | Metadata Harvest and Citations| Using the [DataCite API](https://support.datacite.org/docs/api) to harvest metadata of datasets with DOIs  | Email (for polite pool) |
+| **EMDB** | Metadata Harvest | Using the Electron Microscopy Data Bank (EMDB) API to harvest the metadata of their datasets as an example of datasets without DOIs. | Email (for polite pool)|
+| **F-UJI** | FAIR scoring | Using [F]-UJI](https://github.com/pangaea-data-publisher/fuji) to calculate FAIR scores of datasets | Follow F-UJI installation instructions |
+| **Make Data Count (MDC)** | Citations | Using the [MDC Dataset Citation Corpus (v4.1)](https://doi.org/10.5281/zenodo.16901115). | Download the JSON format files of the corpus to run the MDC-related pipelines |
+| **OpenAlex** | Citations and Date Enrichment| Using the [OpenAlex snapshot](https://docs.openalex.org/download-all-data/openalex-snapshot) to identify citations and publication dates | Download the snapshot to run OpenAlex related pipelines |
+| **Crossref** | Date Enrichment | Using [Crossref API](https://www.crossref.org/documentation/retrieve-metadata/rest-api/) to find publication dates of citing sources | Email (for polite pool) |
+| **Software Heritage (SWH)** | Mentions | Using [Software Heritage Graph Dataset](https://docs.softwareheritage.org/devel/swh-export/graph/) to find mentions of datasets in GitHub READMEs | Follow SWH instruction to use Graph Dataset |
+| **HuggingFace** | Mentions | Using [Hugging Face API](https://huggingface.co/docs/hub/en/api) to find mentions of datasets in model cards | [User Access Token](https://huggingface.co/settings/tokens) |
+| **USPTO** | Mentions | Using [United States Patent and Trademark Office (USPTO) bulk data of granted patents](https://data.uspto.gov/bulkdata/datasets/ptgrxml) to find mentions of datasets. | [API key](https://developer.uspto.gov/faq/tsdr-api-bulk-download) |
+| **GitHub** | Mentions | Using [GitHub API](https://docs.github.com/en/rest) for finding mentions in README (single dataset queries) | [Personal Access Token](https://github.com/settings/tokens) |
 
