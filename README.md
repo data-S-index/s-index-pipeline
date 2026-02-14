@@ -1,5 +1,17 @@
 # Sindex Data Collection and Processing Pipelines
 
+**Pipelines used to collect data from various sources (DataCite, OpenAlex, MDC, etc.) and compute S-index**
+
+[![Stargazers][stars-shield]][stars-url]
+[![Issues][issues-shield]][issues-url]
+[![MIT License][license-shield]][license-url]
+
+[stars-shield]: https://img.shields.io/github/stars/data-S-index/s-index-pipeline.svg?style=flat-square
+[stars-url]: https://github.com/data-S-index/s-index-pipeline/stargazers
+[issues-shield]: https://img.shields.io/github/issues/data-S-index/s-index-pipeline.svg?style=flat-square
+[issues-url]: https://github.com/data-S-index/s-index-pipeline/issues
+[license-shield]: https://img.shields.io/github/license/data-S-index/s-index-pipeline.svg?style=flat-square
+[license-url]: https://github.com/data-S-index/s-index-pipeline/blob/master/LICENSE
 
 ## ℹ️ About
 
