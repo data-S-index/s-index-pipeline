@@ -1,6 +1,6 @@
 # Sindex Data Collection and Processing Pipelines
 
-**Pipelines used to collect data from various sources (DataCite, OpenAlex, MDC, etc.) and compute S-index**
+**Pipeline code used to collect data from various sources (DataCite, OpenAlex, MDC, etc.) and compute S-index**
 
 [![Stargazers][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
@@ -15,12 +15,10 @@
 
 ## ℹ️ About
 
-Python-based pipelines for collecting dataset metadata, calculating FAIR scores, identifying citations, extracting mentions, and computing Dataset Index and S-index. This repository houses the `sindex` source package along with testing and production workflows. We used this code to compute Dataset Index of 49M+ datasets and the S-index of their 1M+ authors as part of our real-world testing and validation. The outputs were included in our NIH S-index Challenge Phase 2 proposal. We refer to the [S-index Hub](https://github.com/data-S-index/hub) for more information about our S-index and the Challenge. This code is under active development as we process more datasets, add more sources for citations and mentions, and so on.
+This repository contains the Python-based code for collecting dataset metadata, calculating FAIR scores, identifying citations, extracting mentions, and computing Dataset Index and S-index. This repository houses the `sindex` source package along with testing and production workflows. We used this code to compute Dataset Index of 49M+ datasets and the S-index of their 1M+ authors as part of our real-world testing and validation. The outputs were included in our NIH S-index Challenge Phase 2 proposal. We refer to the [S-index Hub](https://github.com/data-S-index/hub) for more information about our S-index and the Challenge. This code is under active development as we process more datasets, add more sources for citations and mentions, and so on.
 
 
-## 📂 Project Organization
-
-The repository is organized to separate the core library logic from the execution environments.
+## 📂 Repository Organization
 
 ```text
 ├── input/                  # Data needed to run some of the pipelines (e.g., MDC data)
@@ -37,7 +35,7 @@ The repository is organized to separate the core library logic from the executio
 │       └── utils/          # Helper functions
 ├── environment.yml         # Conda environment definition
 ├── pyproject.toml          # Build system and dependency configuration
-└── README.md               # Project documentation
+└── README.md               # Documentation
 ```
 
 ## 🛠️ Installation & Setup
@@ -73,7 +71,7 @@ pip install -e .
 Register the environment so it appears as a kernel option in JupyterLab.
 
 ```bash
-# Install ipykernel if not already in environment.yml
+# Install ipykernel if not already done
 conda install ipykernel
 
 # Register the kernel
@@ -86,14 +84,14 @@ conda deactivate s-index-pipeline
 
 ### 5. Launch
 
+Launch Jupyter lab from your base environment (or any other where it is installed)
 ```bash
-# Launch Jupyter lab from your base environment (or any other where it is installed)
 jupyter lab
 ```
 
 ## 🚀 Usage
 
-To run production jobs (large scale), navigate to the **`notebooks-batch/`** directory. E.g., run notebooks like `datacite_harvest.ipynb` or `emdb_harvest.ipynb` to fetch harvest dataset metadata.
+To run production jobs (large scale), navigate to the **`notebooks-batch/`** directory. E.g., run notebooks like `datacite_harvest.ipynb` or `emdb_harvest.ipynb` to harvest dataset metadata from DataCite and EMDB respectively..
 
 ## 🔌 Sources Used
 
