@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+import json
 import multiprocessing as mp
 import os
 import time
@@ -8,7 +9,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from multiprocessing import Pool
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Dict, List
 
 import duckdb
 import orjson
@@ -20,7 +21,6 @@ from sindex.core.ids import _norm_doi
 from sindex.core.io import _iter_json_lines
 
 from .discovery import (
-    get_datacite_doi_record,
     stream_datacite_records,
 )
 from .normalize import (
@@ -28,76 +28,8 @@ from .normalize import (
     slim_datacite_record,
 )
 
-# We need a global variable in the worker process to hold the shared counter
 _worker_counter = None
 _worker_lock = None
-
-
-def harvest_datacite_doi_list_to_ndjson(
-    doi_list: Iterable[str],
-    output_folder: str,
-    batch_size: int = 2,
-):
-    """
-    Fetch DataCite metadata for many DOIs.
-
-    This function is used to test our pipeline for given DOIs
-    It saves Datacite records to NDJSON files in batches.
-    Each NDJSON line contains exactly the JSON object returned in the DataCite
-    API response under the `"data"` key, with no additional fields added.
-
-    Args:
-        doi_list: List of dois.
-        batch_size: Number of metadata records to write per NDJSON output file.
-        output_folder: Directory where NDJSON batch files will be written.
-
-    Returns:
-        None.
-        NDJSON files are written to `output_folder`, each containing
-        `batch_size` lines (except the final file, which may contain fewer).
-        Each line is a standalone JSON object representing the full DataCite
-        metadata record for a single DOI.
-
-    Notes:
-        - Uses a shared retry-aware `requests.Session` for performance.
-        - DOIs that do not resolve in DataCite are skipped.
-        - Files are named sequentially as `datacite-batch-0000.ndjson`,
-          `datacite-batch-0001.ndjson`, etc.
-    """
-    session = make_session()
-    out_dir = Path(output_folder)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    batch_index = 0
-    batch = []
-
-    for doi in doi_list:
-        print(f"Fetching {doi} ...")
-
-        metadata = get_datacite_doi_record(doi, session=session)
-        if metadata is None:
-            print(f"  No DataCite record found for {doi}")
-            continue
-
-        # Append only the metadata (the DataCite 'data' portion)
-        batch.append(metadata)
-
-        if len(batch) == batch_size:
-            fname = out_dir / f"datacite-batch-{batch_index:04d}.ndjson"
-            print(f"  Writing {len(batch)} metadata records → {fname}")
-            with open(fname, "w", encoding="utf-8") as f:
-                for obj in batch:
-                    f.write(json.dumps(obj, ensure_ascii=False) + "\n")
-            batch = []
-            batch_index += 1
-
-    # Write final partial batch
-    if batch:
-        fname = out_dir / f"datacite-batch-{batch_index:04d}.ndjson"
-        print(f"  Writing {len(batch)} metadata records → {fname}")
-        with open(fname, "w", encoding="utf-8") as f:
-            for obj in batch:
-                f.write(json.dumps(obj, ensure_ascii=False) + "\n")
 
 
 def harvest_datacite_datasets_for_date_range_to_ndjson(
@@ -158,14 +90,14 @@ def harvest_datacite_datasets_for_date_range_to_ndjson(
     total_records = 0
     end = end_date
 
-    # Use provided session or create one (retry-aware)
+    # Use provided session or create one
     s = session or make_session(total_retries=6, backoff=2.0)
 
     while True:
         # Compute window start (inclusive)
         window_start = end - timedelta(days=window_days - 1)
 
-        # Do not cross calendar-year boundaries (to faciliate post-processing)
+        # Do not cross calendar-year boundaries (decited to faciliate post-processing)
         year_start = date(end.year, 1, 1)
         if window_start < year_start:
             window_start = year_start
@@ -451,7 +383,7 @@ def batch_slim_datacite_record_to_ndjson_fast(
                 print(f"\r[{idx}/{num_files}] files completed", end="", flush=True)
 
     if one_line_progress:
-        print()  # Line break after progress bar
+        print()
 
     # Summary statistics
     dt = time.time() - t0
@@ -514,7 +446,6 @@ def _worker_process_batch(lines):
             slim = slim_datacite_record(rec)
 
             # 3. Serialize immediately (bytes)
-            # Adding \n here ensures the writer just has to dump bytes
             output_lines.append(orjson.dumps(slim) + b"\n")
             stats["kept"] += 1
 
@@ -575,7 +506,6 @@ def batch_slim_datacite_chunked(
     batch_idx = 0
 
     # 2. Start Worker Pool
-    # We use imap_unordered so we can process results as soon as *any* worker finishes
     with Pool(workers) as pool:
         # Create the generator that feeds the pool
         line_generator = _stream_lines_from_files(all_files, batch_size)
@@ -611,13 +541,13 @@ def batch_slim_datacite_chunked(
     rate = int(total_kept / dt) if dt > 0 else 0
     print()  # Newline after progress bar
 
-    print("-" * 50)
+    print(" ")
     print(f"DONE in {dt:.2f}s")
     print(f"Total Lines Read: {total_read:,}")
     print(f"Total Lines Kept: {total_kept:,}")
     print(f"Processing Rate:  {rate:,} records/sec")
     print(f"Output Files:     {batch_idx} files written to {dst}")
-    print("-" * 50)
+    print(" ")
 
     return {"read": total_read, "kept": total_kept, "bad": total_bad, "time": dt}
 
@@ -648,8 +578,7 @@ def batch_slim_datacite_chunked_tuned(
     total_bad = 0
     batch_idx = 0
 
-    # 2. Worker Pool with Recycling (maxtasksperchild)
-    # This prevents the memory bloat/slowdown after processing millions of lines
+    # 2. Worker Pool with Recycling
     with Pool(workers, maxtasksperchild=50) as pool:
         # Create the generator
         line_generator = _stream_lines_from_files(all_files, batch_size)
@@ -672,7 +601,7 @@ def batch_slim_datacite_chunked_tuned(
 
             batch_idx += 1
 
-            # Simple Progress Bar
+            # Simple progress message one line
             if batch_idx % 10 == 0:
                 print(
                     f"\rProcessed: {total_read:,} lines | Batches: {batch_idx} | Bad: {total_bad}",
@@ -813,7 +742,7 @@ def batch_find_citations_dc_from_citation_block_optimized(
     pubdate_parquet_path: str,
 ):
     # 1. Load the Parquet Cache
-    print(f"[*] Loading pubdate cache from {Path(pubdate_parquet_path).name}...")
+    print(f"Loading pubdate cache from {Path(pubdate_parquet_path).name}...")
     with duckdb.connect(":memory:") as conn:
         res = conn.execute(
             f"SELECT doi, pubdate FROM read_parquet('{pubdate_parquet_path}')"
@@ -825,14 +754,14 @@ def batch_find_citations_dc_from_citation_block_optimized(
     total_files = len(files)
 
     # 2. Fast Discovery Pass for Granular Progress
-    print("[*] Calculating total workload (scanning line counts)...")
+    print("Calculating total workload (scanning line counts)...")
     total_lines = 0
     for f in files:
         with open(f, "rb") as f_bin:
             # sum(1 for line in f) is the fastest way to count lines in Python
             total_lines += sum(1 for _ in f_bin)
 
-    print(f"    -> Ready to process {total_lines:,} lines across {total_files} files.")
+    print(f"Ready to process {total_lines:,} lines across {total_files} files.")
 
     count_citations = 0
     processed_lines = 0
@@ -846,7 +775,6 @@ def batch_find_citations_dc_from_citation_block_optimized(
                     processed_lines += 1
 
                     # --- GRANULAR PROGRESS UPDATE ---
-                    # Throttle update to 10 times per second to save CPU
                     now = time.time()
                     if now - last_ui_update > 0.1:
                         pct = (processed_lines / total_lines) * 100
@@ -893,7 +821,6 @@ def batch_find_citations_dc_from_citation_block_optimized(
                         count_citations += 1
 
     total_time = time.time() - start_time
-    # Clear the progress line with a final report
     print(f"\n[DONE] Saved {count_citations:,} citations in {total_time:.2f}s.")
 
 
@@ -911,7 +838,6 @@ def process_file_chunk(
     """
     Worker function. Receives date_map directly (fast for small caches).
     """
-    # Imports inside worker to prevent NameError
     from pathlib import Path
 
     import orjson
@@ -933,7 +859,7 @@ def process_file_chunk(
             if not line:
                 break
 
-            # Update progress every 50 lines for smooth UI
+            # Update progress every 50 lines
             local_counter += 1
             if local_counter >= 50:
                 with _worker_lock:
