@@ -12,7 +12,7 @@ import pandas as pd
 def main_metadata(data):
     """
     Transforms a raw slim metadata record into the main metadata format for DuckDB tables.
-    Returns None if the record should be skipped.
+    Returns None if the record should be skipped (missing dataset ID).
     """
 
     identifiers_list = data.get("identifiers")
@@ -40,7 +40,7 @@ def main_metadata(data):
 
 def _worker_process_file(args):
     """
-    Worker function: Processes a single slim metadata NDJSON file.
+    Worker function for parallel processing: Processes a single slim metadata NDJSON file.
     """
     in_path, out_path, overwrite = args
 
@@ -386,13 +386,22 @@ def create_fair_scores_table(db_path, input_path):
 
 
 def create_topics_table(db_path):
+    """
+    Create final topics table
+
+    Topics from OA and custom model are already loaded as their own tables in the DB.
+
+    Logic: Use OpenAlex topic if exist and confidence score > 0.5 else
+    use topic from custom model if confidence score> than OA confidence score or if OA topic does not exist for the dataset
+
+    The selected source is saved in a 'source' column as 'openalex' or 'custom_model'
+    """
     con = duckdb.connect(db_path)
     con.execute("PRAGMA enable_progress_bar;")
 
     print("Creating final 'topics' table with score comparison logic")
     start_time = time.time()
 
-    # We use a CREATE TABLE AS SELECT (CTAS) statement
     con.execute("""
         CREATE OR REPLACE TABLE topics AS
         SELECT 
@@ -904,7 +913,9 @@ def calculate_normalization_factors_subfields(db_path, limit=None):
 
 def calculate_normalization_factors(db_path, level_name, id_col, name_col, limit=None):
     """
-    Generic function to create normalization tables.
+    Generic function to create normalization tables based on either topics or subfields
+
+    The level (toipcs or subfileds) is set through the level_name parameter
 
     Args:
         level_name (str): Suffix for table name (e.g., 'topics' -> 'normalization_factors_topics')
@@ -912,7 +923,7 @@ def calculate_normalization_factors(db_path, level_name, id_col, name_col, limit
         name_col (str): The column to group by Name (e.g., 'topic_name')
     """
     table_name = f"normalization_factors_{level_name}"
-    print(f"--- Creating {table_name} ---")
+    print(f"Creating {table_name}")
 
     with duckdb.connect(db_path) as con:
         # Dynamic SQL to select the specific ID/Name columns
@@ -937,8 +948,7 @@ def calculate_normalization_factors(db_path, level_name, id_col, name_col, limit
 
     results = []
 
-    # --- Helper function for median calculation ---
-    # We pass the dynamic column names as keys for the dictionary
+    # Helper function for median calculation
     def get_stats(subset, group_id, group_name, year_val):
         f = subset["fair_score"].dropna()
         c = subset["cit_weight_3yr"].dropna()
@@ -1010,7 +1020,7 @@ def calculate_normalization_factors(db_path, level_name, id_col, name_col, limit
 
             results.append(get_stats(group, g_id, g_name, int(year)))
 
-    # --- Saving to DuckDB ---
+    # Saving to DuckDB
     df_norm = pd.DataFrame(results)
 
     # Fix object types for DuckDB
@@ -1049,7 +1059,7 @@ def create_floored_normalization_factors_table(
     name_col,
     cit_floor=1.0,  # Minimum value for citations
     men_floor=1.0,  # Minimum value for mentions
-    fair_min_base=10.0,  # Absolute minimum base for FAIR score
+    fair_min_base=13.46,  # Absolute minimum base for FAIR score
 ):
     """
     Create table with floor values for the normalization factors.
@@ -1147,8 +1157,8 @@ def create_floored_normalization_factors_table(
 
 def create_dataset_index_table(db_path, temp_dir=None):
     """
-    Performance optimized strategy:
-    1. Create 'dataset_norm_index': A skinny table with ONLY IDs, normalization factors, and dataset index.
+    Performance optimization strategy (could be slow if creating the full dataset_index table with all the columns):
+    1. Create 'dataset_norm_index': A skinny table with only IDs, normalization factors, and dataset index.
     2. Create 'dataset_index': A virtual VIEW joining dataset_metrics + dataset_norm_index.
 
     Args:
@@ -1160,19 +1170,19 @@ def create_dataset_index_table(db_path, temp_dir=None):
     start_time = time.time()
 
     with duckdb.connect(db_path) as con:
-        # --- Performance Settings ---
+        # Settings
         con.execute("PRAGMA enable_progress_bar=true")
 
         # Set the temporary directory if provided
         if temp_dir:
-            print(f"-> Setting temp directory to: {temp_dir}")
+            print(f"Setting temp directory to: {temp_dir}")
             con.execute(f"SET temp_directory='{temp_dir}'")
 
         # con.execute("SET memory_limit='32GB'")
         # con.execute("SET threads=20")
 
-        # STEP 1: Create 'skinny' table
-        print("Generating numeric 'dataset_norm_index' (writing to disk)")
+        # STEP 1: Create skinny table with only IDs, normalization factors, and dataset index
+        print("Generating 'dataset_norm_index' table")
 
         query_scores = """
         CREATE OR REPLACE TABLE dataset_norm_index AS
@@ -1240,8 +1250,8 @@ def create_dataset_index_table(db_path, temp_dir=None):
         """
         con.execute(query_scores)
 
-        # STEP 2: Create Virtual View (Instant)
-        print("-Creating virtual view 'dataset_index'")
+        # STEP 2: Create virtual view table
+        print("Creating virtual view 'dataset_index' table")
 
         query_view = """
         CREATE OR REPLACE VIEW dataset_index AS
@@ -1273,10 +1283,7 @@ def create_dataset_index_table(db_path, temp_dir=None):
 
 def create_creators_table(db_path, limit=None, temp_dir=None):
     """
-    Performance Optimized Strategy (CPU Focused):
-    1. DISABLE insertion order (Unlocks full multi-threading).
-    2. REMOVE Regex (Uses fast string splitting).
-    3. OPTIMIZE JSON (Reduces parsing overhead).
+    Explode dataset_index table into a virtual "view" table with one row per creator per dataset
     """
     # 1. Construct LIMIT clause
     limit_clause = ""
@@ -1289,7 +1296,7 @@ def create_creators_table(db_path, limit=None, temp_dir=None):
     start_time = time.time()
 
     with duckdb.connect(db_path) as con:
-        # --- HIGH PERFORMANCE SETTINGS ---
+        # Settings
         con.execute("PRAGMA enable_progress_bar=true")
 
         con.execute("SET preserve_insertion_order=false")
@@ -1416,11 +1423,9 @@ def create_s_index_identifier_name_affiliation_table(
     print("Creating s_index_identifier_name_affiliation table")
     start_time = time.time()
 
-    # Handle LIMIT safely
+    # Limit is used for testing for instance on the first 1000 (if limit=1000) rows of creators_table
     if limit:
-        print(f"-> TEST MODE (Limit {limit}): Using optimized subset fetch.")
-        # Optimization: Filter IDs first, THEN join.
-        # This prevents scanning 49M rows for a 1000 row test.
+        print(f"TEST MODE (Limit {limit})")
         source_cte = f"""
         source_subset AS (
             SELECT * FROM dataset_creators_parsed LIMIT {limit}
@@ -1435,7 +1440,6 @@ def create_s_index_identifier_name_affiliation_table(
         """
     else:
         # Full Run: Use the view directly.
-        # Since we aren't limiting, we want the high-bandwidth stream.
         source_cte = """
         source_data AS (
             SELECT * FROM creators_table
@@ -1443,16 +1447,16 @@ def create_s_index_identifier_name_affiliation_table(
         """
 
     with duckdb.connect(db_path) as con:
-        # --- MAX PERFORMANCE SETTINGS ---
+        # Settings
         con.execute("PRAGMA enable_progress_bar=true")
         if temp_dir:
             con.execute(f"SET temp_directory='{temp_dir}'")
 
-        # Utilization: High RAM, moderate threads (too many threads can cause thrashing)
+        # Best based on our testing: High memory, moderate threads (too many threads can cause thrashing)
         con.execute("SET memory_limit='64GB'")
         con.execute("SET threads=10")
 
-        # Crucial for Group By speed
+        # Crucial for speed as order is not important here
         con.execute("SET preserve_insertion_order=false")
 
         print("Executing Single-Pass Aggregation...")
@@ -1550,577 +1554,3 @@ def create_s_index_identifier_name_affiliation_table(
 
         except Exception as e:
             print("\nError:", e)
-
-
-####### NOT NEEDED #######
-
-
-def calculate_normalization_factors_subfields_rawDindex(db_path, limit=None):
-    """
-    Create table with normalization factors for 'raw_dataset_index_3yr'.
-
-    Logic:
-    For a Target Year Y, the benchmark is calculated using the median of datasets
-    published in Y-3.
-    """
-    print("Creating normalization_factors_subfields_rawDindex table")
-
-    with duckdb.connect(db_path) as con:
-        # 1. Fetch data
-
-        query = """
-            SELECT subfield_id, subfield_name, pubyear, raw_dataset_index_3yr
-            FROM dataset_metrics
-            WHERE pubyear IS NOT NULL 
-        """
-        if limit:
-            print(f" TESTING MODE: Sampling {limit} random datasets")
-            query += f" USING SAMPLE {limit}"
-
-        df = con.execute(query).df()
-
-    if df.empty:
-        print("No data found. Skipping.")
-        return
-
-    # Ensure IDs are strings and handle missing names
-    df["subfield_id"] = df["subfield_id"].astype(str)
-    df["subfield_name"] = df["subfield_name"].fillna("Unknown")
-
-    results = []
-
-    # Helper function for median calculation
-    def get_stats(subset, s_id, s_name, target_year_val):
-        # We drop NaNs to ensure the median is valid
-        r = subset["raw_dataset_index_3yr"].dropna()
-
-        return {
-            "subfield_id": s_id,
-            "subfield_name": s_name,
-            "pubyear": target_year_val,  # This is the year Y (the target year)
-            "median_raw_Dindex": float(r.median()) if not r.empty else None,
-            "n_count": int(len(r)),  # Number of datasets used for this median
-        }
-
-    # 1. Global & Subfield Benchmarks (All-time aggregations)
-    # Note: These calculate the median of ALL valid years available in the DB
-    print("Generating All-time Benchmarks...")
-    results.append(get_stats(df, None, None, None))  # Global All-time
-
-    for (sub_id, sub_name), group in df.groupby(["subfield_id", "subfield_name"]):
-        results.append(get_stats(group, sub_id, sub_name, None))  # Subfield All-time
-
-    # 2. Yearly Benchmarks (The Y-3 Logic)
-    min_data_year = int(df["pubyear"].min())
-    max_data_year = int(df["pubyear"].max())
-
-    # We can only generate benchmarks for Year Y if we have data for Y-3.
-    # So the Target Years start at min_data_year + 3
-    start_target_year = min_data_year + 3
-    end_target_year = max_data_year
-
-    print(
-        f"Generating yearly benchmarks for Target Years {start_target_year} to {end_target_year}..."
-    )
-
-    # Loop through the TARGET years (Y)
-    for target_year in range(start_target_year, end_target_year + 1):
-        source_year = target_year - 3
-
-        # A. Global Yearly (all subfields combined)
-        # Filter for data from Y-3 only
-        mask_all = df["pubyear"] == source_year
-        r_all = df.loc[mask_all, "raw_dataset_index_3yr"].dropna()
-
-        results.append(
-            {
-                "subfield_id": None,
-                "subfield_name": None,
-                "pubyear": int(target_year),
-                "median_raw_Dindex": float(r_all.median()) if not r_all.empty else None,
-                "n_count": int(len(r_all)),
-            }
-        )
-
-        # B. Subfield-Yearly (specific subfield)
-        # Filter for data from Y-3 only within subfields
-        # Optimization: Filter df first by year to speed up groupby
-        df_year_subset = df[df["pubyear"] == source_year]
-
-        if not df_year_subset.empty:
-            for (sub_id, sub_name), group in df_year_subset.groupby(
-                ["subfield_id", "subfield_name"]
-            ):
-                results.append(get_stats(group, sub_id, sub_name, int(target_year)))
-
-    # 3. Save to DuckDB
-    df_norm = pd.DataFrame(results)
-
-    # Fix types for DuckDB
-    df_norm["subfield_id"] = df_norm["subfield_id"].astype("object")
-    df_norm["subfield_name"] = df_norm["subfield_name"].astype("object")
-
-    print(f"Saving {len(df_norm)} benchmark rows...")
-
-    with duckdb.connect(db_path) as con:
-        con.execute("DROP TABLE IF EXISTS normalization_factors_subfields_rawDindex")
-
-        con.execute("""
-            CREATE TABLE normalization_factors_subfields_rawDindex (
-                subfield_id VARCHAR, 
-                subfield_name VARCHAR,
-                pubyear INTEGER,
-                median_raw_Dindex DOUBLE, 
-                n_count INTEGER
-            )
-        """)
-
-        con.register("df_view", df_norm)
-        con.execute(
-            "INSERT INTO normalization_factors_subfields_rawDindex SELECT * FROM df_view"
-        )
-        con.unregister("df_view")
-
-        print("normalization_factors_subfields_rawDindex table created.")
-
-        print("\n-Preview (Top 5 Yearly Benchmarks) ---")
-        print(
-            con.execute("""
-                SELECT subfield_name, pubyear as target_year, median_raw_Dindex, n_count 
-                FROM normalization_factors_subfields_rawDindex 
-                WHERE pubyear IS NOT NULL
-                ORDER BY n_count DESC 
-                LIMIT 5
-            """).df()
-        )
-
-
-def create_dataset_index_table_old(db_path):
-    """
-    Create table with dataset index (both based on topics and subfields normalization)
-    """
-    print("Creating dataset_index table")
-    start_time = time.time()
-
-    with duckdb.connect(db_path) as con:
-        # Settings
-        con.execute("SET memory_limit='32GB'")
-        con.execute("PRAGMA enable_progress_bar=true")
-
-        # Table
-        query = """
-        CREATE OR REPLACE TABLE dataset_index AS
-        WITH base AS (
-            SELECT 
-                m.*,
-                
-                -- Topics level normalization factors
-                GREATEST(COALESCE(nt1.median_fair_score_3yr, nt2.median_fair_score_3yr, ntl.median_fair_score_3yr, 20), 20) as t_norm_fair,
-                CASE 
-                    WHEN nt1.median_fair_score_3yr > 0 THEN 'Exact Year'
-                    WHEN nt2.median_fair_score_3yr > 0 THEN 'Recent History'
-                    WHEN ntl.median_fair_score_3yr > 0 THEN 'Topic Lifetime'
-                    ELSE 'Global Default'
-                END as t_source_fair,
-
-                GREATEST(COALESCE(NULLIF(nt1.median_cit_weight_3yr, 0), NULLIF(nt2.median_cit_weight_3yr, 0), NULLIF(ntl.median_cit_weight_3yr, 0), 1.0), 1.0) as t_norm_cit,
-                CASE 
-                    WHEN nt1.median_cit_weight_3yr > 0 THEN 'Exact Year'
-                    WHEN nt2.median_cit_weight_3yr > 0 THEN 'Recent History'
-                    WHEN ntl.median_cit_weight_3yr > 0 THEN 'Topic Lifetime'
-                    ELSE 'Global Default'
-                END as t_source_cit,
-
-                GREATEST(COALESCE(NULLIF(nt1.median_men_weight_3yr, 0), NULLIF(nt2.median_men_weight_3yr, 0), NULLIF(ntl.median_men_weight_3yr, 0), 1.0), 1.0) as t_norm_men,
-                CASE 
-                    WHEN nt1.median_men_weight_3yr > 0 THEN 'Exact Year'
-                    WHEN nt2.median_men_weight_3yr > 0 THEN 'Recent History'
-                    WHEN ntl.median_men_weight_3yr > 0 THEN 'Topic Lifetime'
-                    ELSE 'Global Default'
-                END as t_source_men,
-
-                -- Subfields level normalization factors
-                GREATEST(COALESCE(ns1.median_fair_score_3yr, ns2.median_fair_score_3yr, nsl.median_fair_score_3yr, 20), 20) as s_norm_fair,
-                CASE 
-                    WHEN ns1.median_fair_score_3yr > 0 THEN 'Exact Year'
-                    WHEN ns2.median_fair_score_3yr > 0 THEN 'Recent History'
-                    WHEN nsl.median_fair_score_3yr > 0 THEN 'Subfield Lifetime'
-                    ELSE 'Global Default'
-                END as s_source_fair,
-
-                GREATEST(COALESCE(NULLIF(ns1.median_cit_weight_3yr, 0), NULLIF(ns2.median_cit_weight_3yr, 0), NULLIF(nsl.median_cit_weight_3yr, 0), 1.0), 1.0) as s_norm_cit,
-                CASE 
-                    WHEN ns1.median_cit_weight_3yr > 0 THEN 'Exact Year'
-                    WHEN ns2.median_cit_weight_3yr > 0 THEN 'Recent History'
-                    WHEN nsl.median_cit_weight_3yr > 0 THEN 'Subfield Lifetime'
-                    ELSE 'Global Default'
-                END as s_source_cit,
-
-                GREATEST(COALESCE(NULLIF(ns1.median_men_weight_3yr, 0), NULLIF(ns2.median_men_weight_3yr, 0), NULLIF(nsl.median_men_weight_3yr, 0), 1.0), 1.0) as s_norm_men,
-                CASE 
-                    WHEN ns1.median_men_weight_3yr > 0 THEN 'Exact Year'
-                    WHEN ns2.median_men_weight_3yr > 0 THEN 'Recent History'
-                    WHEN nsl.median_men_weight_3yr > 0 THEN 'Subfield Lifetime'
-                    ELSE 'Global Default'
-                END as s_source_men
-
-            FROM dataset_metrics m
-
-            LEFT JOIN normalization_factors_topics nt1 ON m.topic_id = nt1.topic_id AND m.pubyear = nt1.pubyear
-            LEFT JOIN normalization_factors_topics nt2 ON m.topic_id = nt2.topic_id AND (m.pubyear-1) = nt2.pubyear
-            LEFT JOIN normalization_factors_topics ntl ON m.topic_id = ntl.topic_id AND ntl.pubyear IS NULL
-            LEFT JOIN normalization_factors_subfields ns1 ON m.subfield_id = ns1.subfield_id AND m.pubyear = ns1.pubyear
-            LEFT JOIN normalization_factors_subfields ns2 ON m.subfield_id = ns2.subfield_id AND (m.pubyear-1) = ns2.pubyear
-            LEFT JOIN normalization_factors_subfields nsl ON m.subfield_id = nsl.subfield_id AND nsl.pubyear IS NULL
-        )
-        SELECT 
-            -- Exclude intermediate raw norm columns to keep the table clean
-            * EXCLUDE (t_norm_fair, t_norm_cit, t_norm_men, s_norm_fair, s_norm_cit, s_norm_men),
-            
-            -- Keep the final applied factors and sources for auditing
-            t_norm_fair as t_norm_fair_final, t_norm_cit as t_norm_cit_final, t_norm_men as t_norm_men_final,
-            s_norm_fair as s_norm_fair_final, s_norm_cit as s_norm_cit_final, s_norm_men as s_norm_men_final,
-
-            -- Dataset Index Calculations
-            (1.0/3.0) * ( (fair_score/t_norm_fair) + (total_cit_weight/t_norm_cit) + (total_men_weight/t_norm_men) ) as dataset_index_topic,
-            (1.0/3.0) * ( (fair_score/s_norm_fair) + (total_cit_weight/s_norm_cit) + (total_men_weight/s_norm_men) ) as dataset_index_subfield
-        FROM base
-        """
-        con.execute(query)
-        print("Query finished. Starting Checkpoint (saving to disk)")
-        con.execute("CHECKPOINT")
-        print("Checkpoint finished.")
-
-        # Report
-        row_count = con.execute("SELECT COUNT(*) FROM dataset_index").fetchone()[0]
-        end_time = time.time()
-
-        print("Success! Table dataset_index created.")
-        print(f"Total Rows: {row_count:,}")
-        print(f"Execution Time: {end_time - start_time:.2f} seconds")
-
-
-def create_creators_table_old(db_path, limit=None):
-    """
-    Creates the creators_table by exploding dataset_index over creators.
-    Prioritizes ORCID for identifiers and normalizes them.
-    """
-    if limit:
-        print(f"TEST MODE: restricting processing to first {limit:,} datasets")
-    else:
-        print("FULL RUN: Creating full creators_table")
-
-    start_time = time.time()
-
-    source_query = "SELECT * FROM dataset_index"
-    if limit:
-        source_query += f" LIMIT {limit}"
-
-    with duckdb.connect(db_path) as con:
-        con.execute("SET memory_limit='32GB'")
-
-        query = f"""
-        CREATE OR REPLACE TABLE creators_table AS
-        WITH source_data AS (
-            {source_query}
-        ),
-        flattened_creators AS (
-            SELECT 
-                d.dataset_id,
-                d.pubyear,
-                d.topic_id,
-                d.topic_name,
-                d.subfield_id,
-                d.subfield_name,
-                d.dataset_index_topic,
-                d.dataset_index_subfield,
-                d.total_cit_weight,
-                d.total_men_weight,
-                d.fair_score,
-                d.total_citations, 
-                d.total_mentions,
-                c.value
-            FROM source_data d,
-            UNNEST(d.creators::json[]) as c(value)
-        ),
-        creators_with_raw_ids AS (
-            SELECT 
-                *,
-                -- Extract Name and Name Type as text
-                value->>'$.name' as creator_name,
-                value->>'$.name_type' as name_type,
-                
-                -- Keep these as JSON types for complex logic
-                json_extract(value, '$.identifiers') as raw_ids_json,
-                json_extract(value, '$.affiliations') as affiliations
-            FROM flattened_creators
-        )
-        SELECT 
-            dataset_id,
-            pubyear,
-            topic_id,
-            topic_name,
-            subfield_id,
-            subfield_name,
-            creator_name,
-            name_type,
-            
-            -- Indentifier handling (ORCID preferred, normalize)
-            LOWER(TRIM(REGEXP_REPLACE(
-                COALESCE(
-                    -- Attempt 1: Specific ORCID (Complex Object)
-                    -- Looks for keys 'identifierType' or 'scheme'
-                    (list_filter(
-                        raw_ids_json::JSON[], 
-                        x -> lower(x->>'$.identifierType') = 'orcid' 
-                             OR lower(x->>'$.scheme') = 'orcid'
-                    )[1]->>'$.identifier'),
-                    
-                    (list_filter(
-                        raw_ids_json::JSON[], 
-                        x -> lower(x->>'$.identifierType') = 'orcid' 
-                             OR lower(x->>'$.scheme') = 'orcid'
-                    )[1]->>'$.value'),
-
-                    -- Attempt 2: Fallback to First Object (Standard Keys)
-                    -- Looks for identifiers[0].identifier
-                    raw_ids_json->0->>'$.identifier',
-                    raw_ids_json->0->>'$.value',
-                    
-                    -- Attempt 3: Fallback to First Simple String
-                    -- Uses the arrow operator to extract text from the first array element
-                    raw_ids_json->>0
-                ),
-                -- Regex to remove ORCID URL prefixes
-                '^(https?://)?(www\.)?orcid\.org/|^orcid:', 
-                ''
-            ))) as primary_identifier,
-
-            affiliations,
-            dataset_index_topic,
-            dataset_index_subfield,
-            total_cit_weight,
-            total_men_weight,
-            fair_score,
-            total_citations,
-            total_mentions
-
-        FROM creators_with_raw_ids
-        """
-
-        con.execute(query)
-
-        count = con.execute("SELECT COUNT(*) FROM creators_table").fetchone()[0]
-        end_time = time.time()
-
-        print("-" * 50)
-        print("Success! creators_table created.")
-        print(f"Total exploded rows: {count:,}")
-        print(f"Execution Time: {end_time - start_time:.2f} seconds")
-        print("-" * 50)
-
-        print("\nPreview")
-        print(
-            con.execute("""
-            SELECT creator_name, primary_identifier 
-            FROM creators_table 
-            WHERE primary_identifier IS NOT NULL 
-            LIMIT 5
-        """).df()
-        )
-
-
-def create_s_index_identifier_table(db_path, limit=None):
-    """
-    Create table with S-index of researchers regrouped based on primary identifier
-    Igoring creators with no identifier
-    """
-    print("Creating S_index_identifier table")
-    start_time = time.time()
-
-    source_query = "SELECT * FROM creators_table"
-    if limit:
-        source_query += f" LIMIT {limit}"
-
-    with duckdb.connect(db_path) as con:
-        con.execute("SET memory_limit='16GB'")
-
-        query = f"""
-        CREATE OR REPLACE TABLE S_index_identifier AS
-        WITH source_data AS (
-            {source_query}
-        )
-        SELECT 
-            primary_identifier,
-            
-            -- 1. IDENTITY
-            list_distinct(list(creator_name)) as creator_names,
-            mode(name_type) as name_type,
-            
-            -- AFFILIATIONS (Cast JSON to VARCHAR[] for flattening)
-            list_distinct(flatten(list(affiliations::VARCHAR[]))) as all_affiliations,
-
-            -- 2. DOMAIN
-            -- Primary Topic (Most Frequent)
-            mode(topic_id) as primary_topic_id,      -- [NEW]
-            mode(topic_name) as primary_topic_name,
-            
-            -- Primary Subfield (Most Frequent)
-            mode(subfield_id) as primary_subfield_id,    -- [NEW]
-            mode(subfield_name) as primary_subfield_name, -- [NEW]
-            
-            -- Breadth
-            count(distinct topic_id) as n_unique_topics,
-            count(distinct subfield_id) as n_unique_subfields,
-            
-            -- Timeline
-            min(pubyear) as first_pub_year,
-            max(pubyear) as last_pub_year,
-
-            -- 3. ACTIVITY & SCORES
-            count(*) as n_datasets,
-            sum(dataset_index_topic) as S_index_topics,
-            sum(dataset_index_subfield) as S_index_subfield,
-            
-            avg(dataset_index_topic) as avg_dataset_index_topics,
-            avg(dataset_index_subfield) as avg_dataset_index_subfield,
-
-            -- 4. RAW METRICS
-            sum(total_cit_weight) as total_cit_weight,
-            sum(total_men_weight) as total_men_weight,
-            sum(total_citations) as sum_total_citations,
-            sum(total_mentions) as sum_total_mentions,
-            avg(fair_score) as avg_fair_score
-
-        FROM source_data
-        WHERE primary_identifier IS NOT NULL
-        GROUP BY primary_identifier
-        ORDER BY S_index_topics DESC
-        """
-
-        con.execute(query)
-
-        row_count = con.execute("SELECT COUNT(*) FROM S_index_identifier").fetchone()[0]
-        end_time = time.time()
-
-        print("Success! S_index_identifier table created.")
-        print(f"Total Unique researchers based on identifier: {row_count:,}")
-        print(f"Execution time: {end_time - start_time:.2f} seconds")
-
-        # Updated Preview to show new columns
-        print("\nTop 5 Researchers (with Topic/Subfield IDs):")
-        print(
-            con.execute("""
-            SELECT 
-                primary_identifier, 
-                primary_topic_name,
-                primary_subfield_name,
-                n_datasets, 
-                S_index_topics 
-            FROM S_index_identifier 
-            LIMIT 5
-        """).df()
-        )
-
-
-def create_s_index_name_affiliation_table(db_path, limit=None):
-    """
-    Create table with S-index of researchers regrouped based on name and affiliation
-    Igoring creators with no name
-    Regrouping is by set of affiliations such that John Smith MIT, John Smith Harvard,
-    and John Smith MIT + Harvard, and John Smith <no affiliation> are regrouped separately
-    """
-    print("Creating s_index_name_affiliation table")
-    start_time = time.time()
-
-    source_query = "SELECT * FROM creators_table"
-    if limit:
-        source_query += f" LIMIT {limit}"
-
-    with duckdb.connect(db_path) as con:
-        # Settings
-        con.execute("SET preserve_insertion_order=false")
-        con.execute("SET threads=1")  # Serial mode for safety
-        con.execute("SET memory_limit='32GB'")
-        con.execute("SET temp_directory='duckdb_tmp'")
-
-        query = f"""
-        CREATE OR REPLACE TABLE s_index_name_affiliation AS
-        WITH source_data AS (
-            {source_query}
-        )
-        SELECT 
-            -- 1. GROUPING KEYS
-            LOWER(TRIM(creator_name)) as grouping_name,
-            
-            -- If affiliation is empty [], returns '[]' as the signature affiliation
-            list_sort(
-                list_transform(
-                    affiliations::VARCHAR[], 
-                    x -> LOWER(TRIM(x))
-                )
-            )::VARCHAR as affiliation_set_signature,
-            
-            -- 2. CONTEXT
-            mode(name_type) as name_type,
-
-            -- 3. DOMAIN & CAREER
-            mode(topic_id) as primary_topic_id,
-            mode(topic_name) as primary_topic_name,
-            mode(subfield_id) as primary_subfield_id,
-            mode(subfield_name) as primary_subfield_name,
-            
-            count(distinct topic_id) as n_unique_topics,
-            count(distinct subfield_id) as n_unique_subfields,
-            min(pubyear) as first_pub_year,
-            max(pubyear) as last_pub_year,
-
-            -- 4. SCORES
-            count(*) as n_datasets,
-            sum(dataset_index_topic) as S_index_topics,
-            sum(dataset_index_subfield) as S_index_subfield,
-            
-            avg(dataset_index_topic) as avg_dataset_index_topics,
-            avg(dataset_index_subfield) as avg_dataset_index_subfield,
-
-            -- 5. RAW METRICS
-            sum(total_cit_weight) as total_cit_weight,
-            sum(total_men_weight) as total_men_weight,
-            sum(total_citations) as sum_total_citations,
-            sum(total_mentions) as sum_total_mentions,
-            avg(fair_score) as avg_fair_score
-
-        FROM source_data
-        WHERE creator_name IS NOT NULL
-        GROUP BY 1, 2
-        ORDER BY S_index_topics DESC
-        """
-
-        try:
-            con.execute(query)
-
-            row_count = con.execute(
-                "SELECT COUNT(*) FROM s_index_name_affiliation"
-            ).fetchone()[0]
-            end_time = time.time()
-
-            print("Success! s_index_name_affiliation table created.")
-            print(f"Total unique Name-Affiliation sets: {row_count:,}")
-            print(f"Execution time: {end_time - start_time:.2f} seconds")
-
-            print("\nPreview")
-            print(
-                con.execute("""
-                SELECT 
-                    grouping_name, 
-                    affiliation_set_signature, 
-                    n_datasets, 
-                    S_index_topics 
-                FROM s_index_name_affiliation 
-                LIMIT 5
-            """).df()
-            )
-
-        except Exception as e:
-            print("\nError during execution:")
-            print(e)

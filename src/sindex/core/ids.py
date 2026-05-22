@@ -17,7 +17,7 @@ _DOI_PATTERN = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
-_EMDB_PATTERN = re.compile(r"EMD-\d{4,5}", re.IGNORECASE)
+_EMDB_PATTERN = re.compile(r"EMD-\d{4,5}", re.IGNORECASE)  # EMD-[4 or 5 digits]
 
 
 def _norm_doi(s: str) -> str:
@@ -38,7 +38,7 @@ def _norm_doi(s: str) -> str:
             a DOI.
 
     Returns:
-        A normalized DOI identifier in lowercase (e.g. "10.1000/abc.def"),
+        A normalized canonical DOI identifier in lowercase (e.g. "10.1000/abc.def"),
         or an empty string if no plausible DOI can be detected.
 
     Examples:
@@ -55,7 +55,7 @@ def _norm_doi(s: str) -> str:
     if not s_clean:
         return ""
 
-    # Work in lowercase for stable matching
+    # Lowercase
     s_lower = s_clean.lower()
 
     # Search for a DOI substring anywhere in the string
@@ -68,7 +68,7 @@ def _norm_doi(s: str) -> str:
     if not doi.startswith("10."):
         return ""
 
-    # Remove trailling characters we often see when extraction DOIs from text and not captured by the regex
+    # Remove trailling characters we often see when extraction DOIs from text (e.g. patents) and not captured by the regex
     doi = doi.rstrip(".,;:)])")
 
     return doi
@@ -79,7 +79,7 @@ def _norm_doi_url(s: str) -> str:
     Normalize a DOI-like string to its canonical https://doi.org/<doi_id> URL form.
 
     This function uses `_norm_doi()` to extract and normalize the DOI identifier and
-    then prefixes it with "https://doi.org/". It is useful when the full URL DOI is needed.
+    then prefixes it with "https://doi.org/". It is used when the full URL DOI is needed.
 
     Args:
         s: Raw DOI string, DOI URL, or text containing a DOI.
@@ -120,10 +120,8 @@ def _norm_emdb_id(s: str) -> str:
     if not s_clean:
         return ""
 
-    # Strict EMDB ID detection: "EMD-" followed by 1 to 6 digits.
-    # We use \b for word boundaries to ensure we don't catch "NOT-EMD-1234"
-    # or part of a longer serial number.
-    m = re.search(r"\b(EMD-\d{1,6})\b", s_clean, flags=re.IGNORECASE)
+    # Search for a EMDB ID substring anywhere in the string
+    m = _EMDB_PATTERN.search(s_clean)
 
     if m:
         # Standardize to uppercase (e.g., EMD-1234)
@@ -140,7 +138,7 @@ def _norm_dataset_id(raw: Any) -> str:
     canonical string suitable for comparison. It supports:
 
       • DOIs (bare or URL form) — normalized using `_norm_doi()`
-      • EMDB IDs (e.g., "EMD-1234" or URLs containing them)
+      • EMDB IDs (e.g., "EMD-1234" or URLs containing them) - normalized with `_norm_emdb_id()`
       • Any other identifier types (e.g., SRA, internal IDs) via a lowercase fallback
 
     Normalization rules:
@@ -165,7 +163,7 @@ def _norm_dataset_id(raw: Any) -> str:
     if doi:
         return doi
 
-    # 2. Strict EMDB ID detection
+    # 2. EMDB ID detection
     emdb_id = _norm_emdb_id(raw)
     if emdb_id:
         return emdb_id
@@ -228,7 +226,7 @@ def is_working_url(s: str, session: requests.Session | None = None) -> bool:
     """
     Checks if the string is a valid URL (not a DOI) and if it resolves.
     """
-    # If it's a DOI, we ignore it here to keep functions distinct
+    # If it's a DOI, we ignore it here to keep functions distinct from 'is_working_doi()'
     if _norm_doi(s):
         return False
 
@@ -253,6 +251,7 @@ def norm_dataset_id_db(x: Optional[str]) -> Optional[str]:
 def norm_doi_url_or_raw(x: Optional[str]) -> Optional[str]:
     """
     Normalize DOI URL when possible; otherwise return raw string.
+    DB-safe, never raises.
     """
     if not x:
         return None

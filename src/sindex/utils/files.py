@@ -1,4 +1,5 @@
 import glob
+import json
 import os
 import sys
 
@@ -18,16 +19,16 @@ def combine_ndjson_files(input_paths, output_path):
                         if not line.strip():
                             continue
 
-                        # Write the raw line directly (fastest)
+                        # Write the raw line directly
                         outfile.write(line)
 
-                        # Ensure line ends with \n (fixes files missing EOF newline)
+                        # Ensure line ends with \n
                         if not line.endswith("\n"):
                             outfile.write("\n")
 
                         processed_count += 1
 
-                        # Update progress every 100k (less console flicker = faster)
+                        # Update progress every 100k
                         if processed_count % 100000 == 0:
                             sys.stdout.write(f"\rLines processed: {processed_count:,}")
                             sys.stdout.flush()
@@ -42,7 +43,7 @@ def merge_ndjson_files_in_folder(input_folder: str, output_file: str):
     """
     Merges all *.ndjson files found inside the input_folder.
     """
-    # Automatically add the wildcard to the folder path
+    # Paths
     search_pattern = os.path.join(input_folder, "*.ndjson")
     files = glob.glob(search_pattern)
 
@@ -64,7 +65,7 @@ def merge_ndjson_files_in_folder(input_folder: str, output_file: str):
         for fname in files:
             try:
                 with open(fname, "r", encoding="utf-8") as infile:
-                    # Initialize line to handle empty files gracefully
+                    # Initialize line to handle empty files
                     line = None
                     for line in infile:
                         outfile.write(line)
@@ -81,4 +82,40 @@ def merge_ndjson_files_in_folder(input_folder: str, output_file: str):
             except PermissionError:
                 print(f"\nSkipping {fname} (Permission Denied)")
 
-    print(f"\r Complete! Total lines in '{output_file}': {total_lines:,}    ")
+    print(f"\r Done! Total lines in '{output_file}': {total_lines:,}")
+
+
+def filter_ndjson_by_identifier_prefix(
+    input_folder: str, output_file: str, prefix: str
+) -> int:
+    ndjson_files = glob.glob(os.path.join(input_folder, "*.ndjson"))
+    total_files = len(ndjson_files)
+    print(f"Found {total_files} NDJSON files in '{input_folder}'")
+
+    matches = 0
+
+    with open(output_file, "w", encoding="utf-8") as out_f:
+        for i, file_path in enumerate(ndjson_files, start=1):
+            print(
+                f"\rProcessed: {i}/{total_files} files, Prefix matches: {matches}",
+                end="",
+                flush=True,
+            )
+            with open(file_path, "r", encoding="utf-8") as in_f:
+                for line in in_f:
+                    line = line.strip()
+                    if not line or prefix not in line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                        if any(
+                            str(id_obj.get("identifier", "")).startswith(prefix)
+                            for id_obj in record.get("identifiers", [])
+                        ):
+                            out_f.write(line + "\n")
+                            matches += 1
+                    except json.JSONDecodeError:
+                        continue
+
+    print(f"\nDone. {matches} matching records written to '{output_file}'")
+    return matches

@@ -85,11 +85,11 @@ def merge_citations_dicts(
             # 4. Update Existing Record
             existing = merged[key]
 
-            # A) Merge sources
+            # Merge sources
             existing_sources = set(existing.get("source") or [])
             existing["source"] = sorted(existing_sources | new_sources)
 
-            # B) Check Year Logic
+            # Check Year Logic
             new_year = rec.get("citation_year")
             ext_year = existing.get("citation_year")
 
@@ -136,10 +136,9 @@ def merge_citations_from_files(input_paths: list[str], output_path: str):
             f.write(json.dumps(record) + "\n")
 
     # 3. Print the Summary Report
-    print("--- Merge Summary ---")
+    print("Merge Summary")
     for path, count in file_reports.items():
         print(f"File: {path} | Lines: {count}")
-    print("-" * 21)
     print(f"Total Input Records:  {total_input_count}")
     print(f"Total Output Records: {output_count}")
     print(f"Duplicates Removed:   {total_input_count - output_count}")
@@ -205,7 +204,7 @@ def merge_citations_from_files_fast(
                 ext_year = existing.get("citation_year")
 
                 # We prefer the earliest year.
-                # If existing has no year, or the new year is earlier:
+                # If existing record has no year, or the new year is earlier, we replace it:
                 if new_year is not None:
                     if ext_year is None or new_year < ext_year:
                         # Update the "winning" year and its related metadata

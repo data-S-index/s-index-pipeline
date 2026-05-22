@@ -29,7 +29,7 @@ def _parse_date_strict(iso_str: str) -> date:
         return date(y, m, d)
     except Exception as e:
         raise ValueError(
-            f"Invalid date '{iso_str}' — must be YYYY-MM-DD and a real calendar date."
+            f"Invalid date '{iso_str}' - must be YYYY-MM-DD and a real calendar date."
         ) from e
 
 
@@ -90,42 +90,18 @@ def _to_datetime_utc(s: Optional[str]) -> Optional[datetime]:
     if not s:
         return None
     try:
-        iso = _norm_date_iso(
-            s
-        )  # raises ValueError if completely invalid / missing year
+        iso = _norm_date_iso(s)
     except ValueError:
         return None
     # Support both "...Z" and "...+00:00"
     iso = iso.replace("Z", "+00:00")
     dt = datetime.fromisoformat(iso)
-    # If no tzinfo, set UTC; else convert to UTC
+    # If no tzinfo, set UTC, else convert to UTC
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     else:
         dt = dt.astimezone(timezone.utc)
     return dt
-
-
-def _years_between(start_dt: datetime, end_dt: datetime) -> float:
-    """
-    Compute the fractional number of years between two UTC datetimes.
-
-    The result is constrained to be non-negative. If `end_dt` is earlier than
-    `start_dt`, the return value is `0.0`. This prevents negative contribution
-    to weighting (e.g., citations that appear to pre-date the dataset publicatio for some reason).
-
-    Year length approximation: 365.25 days/year (to include leap-year average)
-
-    Args:
-        start_dt: Dataset creation datetime (UTC).
-        end_dt: Citation publication datetime (UTC).
-
-    Returns:
-        Fractional years difference (float >= 0.0).
-    """
-    seconds = (end_dt - start_dt).total_seconds()
-    years = seconds / (365.25 * 24 * 3600.0)
-    return years if years > 0 else 0.0
 
 
 def _as_iso_from_dateparts(parts) -> str:
@@ -198,7 +174,6 @@ def get_realistic_date(date_str: str | None, start_year: int = 1950) -> str | No
             return date_str
 
     except (ValueError, TypeError):
-        # Returns None if the string is malformed or not a date
         pass
 
     return None
@@ -210,7 +185,7 @@ def get_best_dataset_date(
 ) -> str | None:
     """
     Returns publication_date if realistic, otherwise created_date if realistic,
-    otherwise None.
+    otherwise None. Use to get publication date of DataCite datasets.
     """
     start_year = 1950
     # Try publication date
