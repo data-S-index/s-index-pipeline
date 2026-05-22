@@ -18,8 +18,8 @@ def best_publication_date_for_doi(
     """
     Return the best-available normalized publication date for a DOI.
 
-    Policy order:
-      1) OpenAlex
+    Selection order:
+      1) OpenAlex (has the most generous API rate limit so we use it first)
       2) DataCite
       3) Crossref
 

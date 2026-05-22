@@ -53,15 +53,13 @@ def _collect_ids_and_pub_dates_from_slimmed_file(
     files recursively, normalizes each identifier using `_norm_dataset_id()`,
     and builds:
 
-      * norm_to_dataset_id: normalized identifier -> dataset_id (original string)
-      * dataset_info: dataset_id -> {"dataset_id", "pub_date"}
-
-    Progress is printed in-place (one updating line) to avoid large logs.
+      - norm_to_dataset_id: normalized identifier -> dataset_id (original string)
+      - dataset_info: dataset_id -> {"dataset_id", "pub_date"}
 
     Args:
         slim_folder: Directory containing slim `.ndjson` files.
         pattern: Glob pattern for selecting NDJSON files (default:
-            `"**/*.ndjson"` for recursive search).
+            `"**/*.ndjson"` for recursive search in subfolders).
 
     Returns:
         A tuple of:
@@ -71,7 +69,7 @@ def _collect_ids_and_pub_dates_from_slimmed_file(
     norm_to_dataset_id: Dict[str, str] = {}
     dataset_info: Dict[str, Dict[str, Any]] = {}
 
-    # ---- File discovery ----
+    # File discovery
     paths = glob.glob(os.path.join(slim_folder, pattern), recursive=True)
     num_files = len(paths)
     print(f"[Slim Scan] Found {num_files} NDJSON file(s).")
@@ -79,12 +77,12 @@ def _collect_ids_and_pub_dates_from_slimmed_file(
     total_records = 0
     file_index = 0
 
-    # ---- Scan each NDJSON file ----
+    # Scan each NDJSON file
     for path in paths:
         file_index += 1
 
         print(
-            f"\r[Slim Scan] Processing file {file_index}/{num_files}",
+            f"\r Processing file {file_index}/{num_files}",
             end="",
             flush=True,
         )
@@ -132,9 +130,9 @@ def _collect_ids_and_pub_dates_from_slimmed_file(
     # Finish last progress line cleanly
     print()
 
-    # ---- Summary ----
-    print(f"[Slim Scan] Processed {total_records:,} total records.")
-    print(f"[Slim Scan] Loaded {len(dataset_info):,} dataset IDs.")
-    print(f"[Slim Scan] Generated {len(norm_to_dataset_id):,} normalized IDs.\n")
+    # Summary
+    print(f"Processed {total_records:,} total records.")
+    print(f"Loaded {len(dataset_info):,} dataset IDs.")
+    print(f"Generated {len(norm_to_dataset_id):,} normalized IDs.\n")
 
     return norm_to_dataset_id, dataset_info

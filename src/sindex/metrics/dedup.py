@@ -75,4 +75,3 @@ def dedupe_citations_by_link(citations: List[Dict]) -> List[Dict]:
             grouped[link] = c
 
     return [grouped[i] for i in order]
-    return [grouped[i] for i in order]

@@ -21,8 +21,6 @@ def make_session(
 ) -> requests.Session:
     """
     Create a pre-configured requests.Session with retry + pooling.
-
-    Sources need to supply their own headers/UA as needed.
     """
     s = requests.Session()
     ua = user_agent or get_user_agent()
@@ -92,6 +90,9 @@ def _is_reachable(
     timeout: float = 10.0,
     allow_blocked: bool = True,
 ) -> bool:
+    """
+    Checks if a URL is working (webpage is reachable)
+    """
     caller = session if session else requests
 
     try:

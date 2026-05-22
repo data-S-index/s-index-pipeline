@@ -18,16 +18,16 @@ def combine_ndjson_files(input_paths, output_path):
                         if not line.strip():
                             continue
 
-                        # Write the raw line directly (fastest)
+                        # Write the raw line directly
                         outfile.write(line)
 
-                        # Ensure line ends with \n (fixes files missing EOF newline)
+                        # Ensure line ends with \n
                         if not line.endswith("\n"):
                             outfile.write("\n")
 
                         processed_count += 1
 
-                        # Update progress every 100k (less console flicker = faster)
+                        # Update progress every 100k
                         if processed_count % 100000 == 0:
                             sys.stdout.write(f"\rLines processed: {processed_count:,}")
                             sys.stdout.flush()
@@ -42,7 +42,7 @@ def merge_ndjson_files_in_folder(input_folder: str, output_file: str):
     """
     Merges all *.ndjson files found inside the input_folder.
     """
-    # Automatically add the wildcard to the folder path
+    # Paths
     search_pattern = os.path.join(input_folder, "*.ndjson")
     files = glob.glob(search_pattern)
 
@@ -64,7 +64,7 @@ def merge_ndjson_files_in_folder(input_folder: str, output_file: str):
         for fname in files:
             try:
                 with open(fname, "r", encoding="utf-8") as infile:
-                    # Initialize line to handle empty files gracefully
+                    # Initialize line to handle empty files
                     line = None
                     for line in infile:
                         outfile.write(line)
@@ -81,4 +81,4 @@ def merge_ndjson_files_in_folder(input_folder: str, output_file: str):
             except PermissionError:
                 print(f"\nSkipping {fname} (Permission Denied)")
 
-    print(f"\r Complete! Total lines in '{output_file}': {total_lines:,}    ")
+    print(f"\r Done! Total lines in '{output_file}': {total_lines:,}")
