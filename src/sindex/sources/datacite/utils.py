@@ -16,6 +16,56 @@ from sindex.core.dates import (
 from sindex.metrics.weights import citation_weight_year
 
 
+def get_citation_blocks_from_ndjson(ndjson_folder, output_file_path):
+    """Extracts records containing citations from NDJSON files and writes them to a new file.
+
+    Scans all NDJSON files in the given folder, filters for records where the
+    citations field is present and non-null, and writes matching lines directly
+    to the output file without re-serialization.
+
+    Args:
+        ndjson_folder: Path to the folder containing input .ndjson files.
+        output_file_path: Path to the output .ndjson file to write results to.
+            Parent directories will be created if they do not exist. Any
+            existing file at this path will be overwritten.
+
+    Returns:
+        None
+
+    Raises:
+        FileNotFoundError: If ndjson_folder does not exist.
+        OSError: If the output file cannot be written.
+    """
+    output_dir = os.path.dirname(output_file_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+    all_files = list(Path(ndjson_folder).glob("*.ndjson"))
+
+    if not all_files:
+        print(f"[{datetime.now()}] No files found.")
+        return
+
+    print(f"[{datetime.now()}] Processing {len(all_files)} files...")
+
+    total_saved = 0
+    with open(output_file_path, "w", encoding="utf-8") as out:
+        for i, f in enumerate(all_files, 1):
+            with open(f, encoding="utf-8") as infile:
+                for line in infile:
+                    record = json.loads(line)
+                    if record.get("citations"):
+                        out.write(line)
+                        total_saved += 1
+            print(
+                f"\r[{i}/{len(all_files)}] {f.name} - {total_saved:,} saved so far",
+                end="",
+                flush=True,
+            )
+
+    print(f"\n[{datetime.now()}] Complete! Total Records Saved: {total_saved:,}")
+
+
 def get_relevant_citations_block_from_ndjson(
     db_path, ndjson_folder, target_table, output_file_path, reset_log=True
 ):

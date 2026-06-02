@@ -12,7 +12,7 @@ from sindex.core.dates import (
 from sindex.core.ids import _norm_doi, _norm_doi_url
 from sindex.enrich.pubdate.jobs import best_publication_date_for_doi
 from sindex.metrics.dedup import dedupe_citations_by_link
-from sindex.metrics.weights import citation_weight, citation_weight_year
+from sindex.metrics.weights import citation_weight_year
 
 
 def slim_datacite_record(metadata: dict) -> dict:

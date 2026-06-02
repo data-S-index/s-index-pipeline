@@ -620,74 +620,71 @@ def batch_slim_datacite_chunked_tuned(
 # --------------------
 
 
-def extract_unique_dois_from_citation_blocks(input_folder: str, output_parquet: str):
-    """
-    1. Iterates through all .ndjson files in a folder.
-    2. Collects a global set of unique cleaned citation DOIs.
-    3. Saves the final unique set to a Parquet file.
-    """
-    input_path = Path(input_folder)
-    files = list(input_path.glob("*.ndjson"))
+def extract_unique_dois_from_citation_blocks(input_file: str, output_parquet: str):
+    """Extracts unique citation DOIs from a citation blocks NDJSON file.
 
-    if not files:
-        print(f"No .ndjson files found in {input_folder}")
+    Iterates through all records in the input file, collects a global set of
+    unique cleaned citation DOIs, and saves the final unique set to a Parquet file.
+    We use this to get the publication year of citations more efficiently (unique query).
+
+    Args:
+        input_file: Path to the input citation_blocks.ndjson file.
+        output_parquet: Path to the output Parquet file to write unique DOIs to.
+            Parent directories will be created if they do not exist.
+    """
+    input_path = Path(input_file)
+
+    if not input_path.exists():
+        print(f"File not found: {input_file}")
         return
 
     unique_dois = set()
     total_records_scanned = 0
 
-    print(f"Scanning {len(files)} files in {input_path.name}...")
+    print(f"Scanning {input_path.name}...")
 
-    for file_path in files:
-        with open(file_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
+    with open(input_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+                total_records_scanned += 1
 
-                try:
-                    item = json.loads(line)
-                    total_records_scanned += 1
+                citations = item.get("citations", {}) or {}
+                doi_list = citations.get("dois", []) or []
 
-                    # Extract citations
-                    citations = item.get("citations", {}) or {}
-                    doi_list = citations.get("dois", []) or []
+                for raw_doi in doi_list:
+                    normed = _norm_doi(raw_doi)
+                    if normed and isinstance(normed, str):
+                        clean_doi = normed.strip()
+                        if clean_doi:
+                            unique_dois.add(clean_doi)
+            except json.JSONDecodeError:
+                continue
 
-                    for raw_doi in doi_list:
-                        normed = _norm_doi(raw_doi)
-                        if normed and isinstance(normed, str):
-                            clean_doi = normed.strip()
-                            if clean_doi:
-                                unique_dois.add(clean_doi)
-                except json.JSONDecodeError:
-                    continue
+    print(
+        f"Scanned {total_records_scanned:,} records. Unique DOIs: {len(unique_dois):,}"
+    )
 
-        print(
-            f"    -> Finished {file_path.name}. Current unique DOIs: {len(unique_dois):,}"
-        )
-
-    # --- SAVE TO PARQUET ---
     if unique_dois:
-        print(
-            f"\nFinal Save: Exporting {len(unique_dois):,} unique DOIs to {output_parquet}..."
-        )
+        print(f"Exporting {len(unique_dois):,} unique DOIs to {output_parquet}...")
 
-        # Prepare for DuckDB
-        doi_list_data = [(d,) for d in unique_dois]
-
-        # Ensure directory exists
         os.makedirs(os.path.dirname(output_parquet), exist_ok=True)
 
         with duckdb.connect(":memory:") as temp_conn:
             temp_conn.execute("CREATE TABLE tmp_dois(doi VARCHAR)")
-            temp_conn.executemany("INSERT INTO tmp_dois VALUES (?)", doi_list_data)
+            temp_conn.executemany(
+                "INSERT INTO tmp_dois VALUES (?)", [(d,) for d in unique_dois]
+            )
             temp_conn.execute(
                 f"COPY tmp_dois TO '{output_parquet}' (FORMAT PARQUET, COMPRESSION 'ZSTD')"
             )
 
-        print(f"[SUCCESS] Aggregate DOI list saved to {output_parquet}")
+        print(f"[SUCCESS] Saved to {output_parquet}")
     else:
-        print("No valid DOIs found in any files.")
+        print("No valid DOIs found.")
 
 
 def lookup_dates_in_oa_snapshot(db_path: str, input_parquet: str, output_parquet: str):
@@ -734,94 +731,6 @@ def lookup_dates_in_oa_snapshot(db_path: str, input_parquet: str, output_parquet
         print(f"    [!] Error during Join: {e}")
     finally:
         con.close()
-
-
-def batch_find_citations_dc_from_citation_block_optimized(
-    input_folder: str,
-    output_filepath: str,
-    pubdate_parquet_path: str,
-):
-    # 1. Load the Parquet Cache
-    print(f"Loading pubdate cache from {Path(pubdate_parquet_path).name}...")
-    with duckdb.connect(":memory:") as conn:
-        res = conn.execute(
-            f"SELECT doi, pubdate FROM read_parquet('{pubdate_parquet_path}')"
-        ).fetchall()
-        date_map = dict(res)
-
-    input_path = Path(input_folder)
-    files = list(input_path.glob("*.ndjson"))
-    total_files = len(files)
-
-    # 2. Fast Discovery Pass for Granular Progress
-    print("Calculating total workload (scanning line counts)...")
-    total_lines = 0
-    for f in files:
-        with open(f, "rb") as f_bin:
-            # sum(1 for line in f) is the fastest way to count lines in Python
-            total_lines += sum(1 for _ in f_bin)
-
-    print(f"Ready to process {total_lines:,} lines across {total_files} files.")
-
-    count_citations = 0
-    processed_lines = 0
-    start_time = time.time()
-    last_ui_update = 0
-
-    with open(output_filepath, "w", encoding="utf-8") as f_out:
-        for idx, file_path in enumerate(files, 1):
-            with open(file_path, "r", encoding="utf-8") as f_in:
-                for line in f_in:
-                    processed_lines += 1
-
-                    # --- GRANULAR PROGRESS UPDATE ---
-                    now = time.time()
-                    if now - last_ui_update > 0.1:
-                        pct = (processed_lines / total_lines) * 100
-                        print(
-                            f"\rProgress: {pct:.2f}% | Line {processed_lines:,}/{total_lines:,} | "
-                            f"File {idx}/{total_files} | Citations: {count_citations:,}",
-                            end="",
-                            flush=True,
-                        )
-                        last_ui_update = now
-
-                    line_data = line.strip()
-                    if not line_data:
-                        continue
-
-                    data = orjson.loads(line_data)
-                    citations = data.get("citations")
-                    if not citations or not any(citations.values()):
-                        continue
-
-                    target_doi = next(
-                        (
-                            item.get("identifier")
-                            for item in data.get("identifiers", [])
-                            if item.get("identifier_type") == "doi"
-                        ),
-                        None,
-                    )
-
-                    if not target_doi:
-                        continue
-
-                    dataset_pubyear = data.get("pubyear")
-
-                    citation_records = datacite_citations_block_to_records_unified(
-                        target_doi=target_doi,
-                        citations=citations,
-                        date_map=date_map,
-                        dataset_pubyear=dataset_pubyear,
-                    )
-
-                    for record in citation_records:
-                        f_out.write(orjson.dumps(record) + "\n")
-                        count_citations += 1
-
-    total_time = time.time() - start_time
-    print(f"\n[DONE] Saved {count_citations:,} citations in {total_time:.2f}s.")
 
 
 # -------------
@@ -1043,11 +952,11 @@ def batch_find_citations_from_dc_serial(
             for line in f_in:
                 processed_count += 1
 
-                # Progress Update every 10k lines
+                # Progress Update every 1000 lines
                 if processed_count % 1000 == 0:
                     pct = (processed_count / total_lines) * 100
                     print(
-                        f"\rProgress: {pct:.2f}% | Found: {citations_found:,}",
+                        f"\rProgress: {pct:.2f}% of datasets | Found: {citations_found:,} citations",
                         end="",
                         flush=True,
                     )

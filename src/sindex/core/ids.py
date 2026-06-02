@@ -125,7 +125,7 @@ def _norm_emdb_id(s: str) -> str:
 
     if m:
         # Standardize to uppercase (e.g., EMD-1234)
-        return m.group(1).upper()
+        return m.group(0).upper()
 
     return ""
 
