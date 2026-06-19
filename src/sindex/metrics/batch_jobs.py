@@ -35,6 +35,7 @@ def main_metadata(data):
         "pubdate": data.get("publication_date"),  # ISO string
         "pubyear": data.get("pubyear"),
         "creators": data.get("creators"),
+        "publisher": data.get("publisher"),
     }
 
 
@@ -221,6 +222,7 @@ def create_metadata_table(db_path, input_path):
         "creators": "JSON",
         "title": "VARCHAR",
         "source": "VARCHAR",
+        "publisher": "VARCHAR",
     }
 
     with duckdb.connect(db_path) as con:
@@ -235,7 +237,8 @@ def create_metadata_table(db_path, input_path):
             pubyear,
             creators,
             title,
-            source
+            source,
+            publisher
             
         FROM read_json_auto(
             {sources_sql}, 

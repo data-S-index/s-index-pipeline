@@ -44,15 +44,20 @@ def stream_datacite_records(
     end_date: str,
     page_size: int = 1000,
     detail: bool = True,
+    updated_after: str | None = None,
+    citations_only: bool = False,
     session: requests.Session | None = None,  # pass a shared session
     timeout: Tuple[int, int] = (10, 240),  # (connect, read) seconds
 ) -> Iterator[Dict]:
     """
-    Stream raw DataCite Dataset records created within a date range.
+    Stream raw DataCite Dataset records created within a date range, optionally
+    filtered to only those updated after a given date.
 
     This function performs a cursor-based harvest of DataCite's /dois API using:
         - a fixed resource type filter (`Dataset`)
         - a created-date range query `[start_date TO end_date]` (both included)
+        - an optional `updated` filter (`[updated_after TO *]`) to narrow results
+        to records modified after a specific date
         - pagination via `links.next` (DataCite's cursor API)
 
     Instead of collecting all API results into memory, this function yields
@@ -63,11 +68,20 @@ def stream_datacite_records(
         start_date: Inclusive ISO date string (YYYY-MM-DD).
         end_date: Inclusive ISO date string (YYYY-MM-DD).
         page_size: Number of records per API page (cursor). Max is 1000 for DataCite.
-        user_agent: Optional override for the User-Agent header.
+        detail: If True, requests full record detail from the API.
+        updated_after: Optional ISO date string (YYYY-MM-DD). When provided, only
+            records updated on or after this date are returned. Useful for
+            incremental harvests where you want datasets created in a historical
+            range that have since gained new citations or metadata changes.
+        citations_only: If True, restricts results to records with at least one
+            citation (citationCount >= 1). Reduces result set significantly but
+            note that DataCite's citationCount index may lag slightly behind the
+            actual citations relationship block.
         session: Shared requests session (recommended) otherwise a new one created.
         timeout: (connect, read) timeout tuple.
             connect = How long to wait while trying to open a TCP connection to the server.
-            read_timeout: How long to wait after the connection is established for the server to start sending data.
+            read_timeout: How long to wait after the connection is established for
+                the server to start sending data.
 
     Yields:
         dict:
@@ -76,8 +90,15 @@ def stream_datacite_records(
     """
     s = session or make_session()
     base_url = BASE_API_URL
+    query = (
+        f"types.resourceTypeGeneral:Dataset AND created:[{start_date} TO {end_date}]"
+    )
+    if updated_after:
+        query += f" AND updated:[{updated_after} TO *]"
+    if citations_only:
+        query += " AND citationCount:[1 TO *]"
     params = {
-        "query": f"types.resourceTypeGeneral:Dataset AND created:[{start_date} TO {end_date}]",
+        "query": query,
         "page[size]": page_size,
         "page[cursor]": 1,
         "detail": str(detail).lower(),
