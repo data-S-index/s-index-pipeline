@@ -394,8 +394,8 @@ def create_topics_table(db_path):
 
     Topics from OA and custom model are already loaded as their own tables in the DB.
 
-    Logic: Use OpenAlex topic if exist and confidence score > 0.5 else
-    use topic from custom model if confidence score> than OA confidence score or if OA topic does not exist for the dataset
+    Logic: Use OpenAlex topic if it exists and confidence score > 0.5 else
+    use topic from custom model if confidence score > OA confidence score or if OA topic does not exist for the dataset
 
     The selected source is saved in a 'source' column as 'openalex' or 'custom_model'
     """
@@ -408,30 +408,28 @@ def create_topics_table(db_path):
     con.execute("""
         CREATE OR REPLACE TABLE topics AS
         SELECT 
-            m.dataset_id,
-            
+            COALESCE(oa.dataset_id, custom.dataset_id) AS dataset_id,
+
             -- Topic Info
             CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN oa.topic_id ELSE custom.topic_id END AS topic_id,
             CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN oa.topic_name ELSE custom.topic_name END AS topic_name,
             CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN oa.score ELSE custom.score END AS score,
-            
+
             -- Source Info
             CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN 'openalex' ELSE 'custom_model' END AS source,
 
             -- Hierarchy Info (Subfield, Field, Domain)
             CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN oa.subfield_id ELSE custom.subfield_id END AS subfield_id,
             CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN oa.subfield_name ELSE custom.subfield_name END AS subfield_name,
-            
+
             CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN oa.field_id ELSE custom.field_id END AS field_id,
             CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN oa.field_name ELSE custom.field_name END AS field_name,
-            
+
             CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN oa.domain_id ELSE custom.domain_id END AS domain_id,
             CASE WHEN COALESCE(oa.score, 0) > 0.5 OR COALESCE(oa.score, 0) > COALESCE(custom.score, 0) THEN oa.domain_name ELSE custom.domain_name END AS domain_name
 
-        FROM metadata m
-        LEFT JOIN topics_oa oa ON m.dataset_id = oa.dataset_id
-        LEFT JOIN topics_custom_model custom ON m.dataset_id = custom.dataset_id
-        WHERE oa.dataset_id IS NOT NULL OR custom.dataset_id IS NOT NULL;
+        FROM topics_oa oa
+        FULL OUTER JOIN topics_custom_model custom ON oa.dataset_id = custom.dataset_id;
     """)
 
     elapsed = time.time() - start_time
@@ -934,6 +932,7 @@ def calculate_normalization_factors(db_path, level_name, id_col, name_col, limit
             SELECT {id_col}, {name_col}, pubyear, fair_score, cit_weight_3yr, men_weight_3yr
             FROM dataset_metrics
             WHERE pubyear IS NOT NULL 
+                AND pubyear > 0
         """
         if limit:
             print(f" TESTING MODE: Sampling {limit} random datasets")
