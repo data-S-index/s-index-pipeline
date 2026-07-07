@@ -1020,7 +1020,25 @@ def calculate_normalization_factors(db_path, level_name, id_col, name_col, limit
             c_vals = group.loc[cit_mask, "cit_weight_3yr"].dropna()
             m_vals = group.loc[cit_mask, "men_weight_3yr"].dropna()
 
-            results.append(get_stats(group, g_id, g_name, int(year)))
+            results.append(
+                {
+                    id_col: g_id,
+                    name_col: g_name,
+                    "pubyear": int(year),
+                    "median_fair_score_3yr": float(f_vals.median())
+                    if not f_vals.empty
+                    else None,
+                    "median_cit_weight_3yr": float(c_vals.median())
+                    if not c_vals.empty
+                    else None,
+                    "median_men_weight_3yr": float(m_vals.median())
+                    if not m_vals.empty
+                    else None,
+                    "n_fair": int(len(f_vals)),
+                    "n_cit": int(len(c_vals)),
+                    "n_men": int(len(m_vals)),
+                }
+            )
 
     # Saving to DuckDB
     df_norm = pd.DataFrame(results)
