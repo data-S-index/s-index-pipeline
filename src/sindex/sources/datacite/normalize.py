@@ -12,7 +12,7 @@ from sindex.core.dates import (
 from sindex.core.ids import _norm_doi, _norm_doi_url
 from sindex.enrich.pubdate.jobs import best_publication_date_for_doi
 from sindex.metrics.dedup import dedupe_citations_by_link
-from sindex.metrics.weights import citation_weight, citation_weight_year
+from sindex.metrics.weights import citation_weight_year
 
 
 def slim_datacite_record(metadata: dict) -> dict:
@@ -31,7 +31,7 @@ def slim_datacite_record(metadata: dict) -> dict:
 
     Returns:
         A slimmed dictionary containing at minimum `"source": "datacite"` and,
-        when present, keys including: doi, title, version, publisher,
+        when present, keys including: doi, title, version, publisher, rights (license),
         publication_date, creators, and citations (split into DOIs and
         other identifiers).
 
@@ -40,6 +40,43 @@ def slim_datacite_record(metadata: dict) -> dict:
         - Creator objects are reduced to name, identifiers, and affiliations.
         - DOI citations are normalized to lowercase DOIs.
         - Non-DOI citations are kept as a list of objects with their IDs and types.
+        - Rights/license entries are reduced to rights, rights_uri,
+          rights_identifier, and scheme_uri. Multiple entries in the source
+          `rightsList` are all preserved as a list under `rights`, in their
+          original order; exact duplicate entries (matched on
+          rights_identifier when present, else the full field set) are
+          deduplicated.
+
+    Notes on dates that are saved from the raw record into the slim metadata files:
+        doi_created_date:
+            From attr["created"] — the DOI's creation timestamp recorded by DataCite
+        created:
+            From attr["dates"] where dateType == "Created".
+        issued :
+            From attr["dates"] where dateType == "Issued".
+        published:
+            From attr["published"]
+        publication_year:
+            From attr["publicationYear"]
+
+    Notes on calculated "pubyear":
+        `pubyear` is derived by checking the following fields in priority
+        order and taking the first one that yields a realistic 4-digit year:
+            1. publication_year (attr["publicationYear"])
+            2. published        (attr["published"])
+            3. doi_created_date (attr["created"], root-level)
+            4. created          (from dates[] where dateType == "Created")
+            5. issued           (from dates[] where dateType == "Issued")
+        For each candidate, only the first 4 characters of the string value
+        are parsed as the year, and the result must pass
+        `is_realistic_integer_year()` to be accepted (which
+        requires an int between 1950 and the current calendar year
+        (inclusive, recalculated at call time) to be accepted).
+        `publication_date` is set only if `pubyear` was successfully
+        derived, and is always year-only precision (e.g. "2021-01-01"),
+        even if a more precise date existed elsewhere in the source record.
+        It is retained for backward compatibility with older pipelines
+        if they expect a `publication_date` but is not used in processing anymore.
     """
     attr = metadata.get("attributes", {})
     out = {"source": "datacite"}
@@ -101,7 +138,50 @@ def slim_datacite_record(metadata: dict) -> dict:
     if publisher:
         out["publisher"] = publisher
 
-    ## Dates
+    # Publisher ID (DataCite client ID, e.g. "tib.ldeo")
+    client_id = (
+        metadata.get("relationships", {}).get("client", {}).get("data", {}).get("id")
+    )
+    if client_id:
+        out["publisher_id"] = client_id
+
+    # Rights / License information
+    rights_list = attr.get("rightsList", [])
+    if isinstance(rights_list, list):
+        rights_slim = []
+        seen_rights = set()
+        for r in rights_list:
+            if not isinstance(r, dict):
+                continue
+            r_slim = {}
+
+            rights = (r.get("rights") or "").strip()
+            if rights:
+                r_slim["rights"] = rights
+
+            rights_uri = (r.get("rightsUri") or "").strip()
+            if rights_uri:
+                r_slim["rights_uri"] = rights_uri
+
+            rights_identifier = (r.get("rightsIdentifier") or "").strip()
+            if rights_identifier:
+                r_slim["rights_identifier"] = rights_identifier
+
+            scheme_uri = (r.get("schemeUri") or "").strip()
+            if scheme_uri:
+                r_slim["scheme_uri"] = scheme_uri
+
+            if r_slim:
+                # Dedup based on rights_identifier if present, else full dict
+                key = r_slim.get("rights_identifier") or tuple(sorted(r_slim.items()))
+                if key not in seen_rights:
+                    seen_rights.add(key)
+                    rights_slim.append(r_slim)
+
+        if rights_slim:
+            out["rights"] = rights_slim
+
+    # Dates
     # 1. DOI Created Date (from root attribute 'created')
     doi_created_raw = attr.get("created")
     if doi_created_raw:

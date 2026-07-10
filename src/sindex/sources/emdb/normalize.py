@@ -162,6 +162,7 @@ def slim_emdb_record(metadata: dict) -> dict:
 
     # Publisher
     out["publisher"] = "The Electron Microscopy Data Bank (EMDB)"
+    out["publisher_id"] = "emdb"
 
     # Citations: split into dois (doi) and other ({id, type})
     # Not applicable to EMDB
