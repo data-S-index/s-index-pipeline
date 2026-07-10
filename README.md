@@ -15,7 +15,7 @@
 
 ## ℹ️ About
 
-This repository contains the Python-based code for collecting dataset metadata, calculating FAIR scores, identifying citations, extracting mentions, and computing Dataset Index and S-index. This repository houses the `sindex` source package along with testing and production workflows. We used this code to compute Dataset Index of 49M+ datasets and the S-index of their 1M+ authors as part of our real-world testing and validation. The outputs were included in our NIH S-index Challenge Phase 2 proposal. We refer to the [S-index Hub](https://github.com/data-S-index/hub) for more information about our S-index and the Challenge. This code is under active development as we process more datasets, add more sources for citations and mentions, and so on.
+This repository contains the Python-based code for collecting dataset metadata, calculating FAIR scores, identifying citations, extracting mentions, and computing Dataset Index and S-index. This repository houses the `sindex` source package along with testing and production workflows. We use this package to collect data for the Scholar Data database. More details are provided in the [Data Collection](https://docs.scholardata.io/data-collection/overview) section of the Scholar Data docs.
 
 
 ## 📂 Repository Organization
@@ -100,7 +100,7 @@ To run production jobs (large scale), navigate to the **`notebooks-batch/`** dir
 | **DataCite** | Metadata Harvest and Citations| Using the [DataCite API](https://support.datacite.org/docs/api) to harvest metadata of datasets with DOIs  | Email (for polite pool) |
 | **EMDB** | Metadata Harvest | Using the [Electron Microscopy Data Bank (EMDB) API](https://www.ebi.ac.uk/emdb/api/) to harvest the metadata of their datasets as an example of datasets without DOIs | Email (for polite pool)|
 | **F-UJI** | FAIR scoring | Using [F-UJI](https://github.com/pangaea-data-publisher/fuji) to calculate FAIR scores of datasets | Follow F-UJI installation instructions |
-| **Make Data Count (MDC)** | Citations | Using the [MDC Dataset Citation Corpus (v4.1)](https://doi.org/10.5281/zenodo.16901115) to find citations to datasets| Download the JSON format files of the corpus to run the MDC-related pipelines |
+| **Make Data Count (MDC)** | Citations | Using the [MDC Dataset Citation Corpus](https://doi.org/10.5281/zenodo.16901115) to find citations to datasets| Download the JSON format files of the corpus to run the MDC-related pipelines |
 | **OpenAlex** | Citations and Date Enrichment| Using the [OpenAlex snapshot](https://docs.openalex.org/download-all-data/openalex-snapshot) to identify citations and publication dates | Download the snapshot to run OpenAlex related pipelines |
 | **Crossref** | Date Enrichment | Using [Crossref API](https://www.crossref.org/documentation/retrieve-metadata/rest-api/) to find publication dates of citing sources | Email (for polite pool) |
 | **Software Heritage (SWH)** | Mentions | Using [Software Heritage Graph Dataset](https://docs.softwareheritage.org/devel/swh-export/graph/) to find mentions of datasets in GitHub READMEs | Follow SWH instruction to use Graph Dataset |
