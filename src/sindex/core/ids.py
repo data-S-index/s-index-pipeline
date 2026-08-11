@@ -68,7 +68,7 @@ def _norm_doi(s: str) -> str:
     if not doi.startswith("10."):
         return ""
 
-    # Remove trailling characters we often see when extraction DOIs from text (e.g. patents) and not captured by the regex
+    # Remove trailing characters we often see when extraction DOIs from text (e.g. patents) and not captured by the regex
     doi = doi.rstrip(".,;:)])")
 
     return doi
