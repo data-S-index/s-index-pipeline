@@ -37,7 +37,7 @@ def dataset_index(
     """
     # Validate primary inputs
     if not (0.0 <= Fi <= 100.0):
-        raise ValueError(f"Fi must be betwee 0% and 100%, currently {Fi}")
+        raise ValueError(f"Fi must be between 0% and 100%, currently {Fi}")
 
     if Ciw < 0 or Miw < 0:
         raise ValueError("Ciw and Miw must be >= 0")

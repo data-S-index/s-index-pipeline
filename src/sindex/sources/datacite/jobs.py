@@ -107,7 +107,7 @@ def harvest_datacite_datasets_for_date_range_to_ndjson(
         # Compute window start (inclusive)
         window_start = end - timedelta(days=window_days - 1)
 
-        # Do not cross calendar-year boundaries (decited to faciliate post-processing)
+        # Do not cross calendar-year boundaries (decided to facilitate post-processing)
         year_start = date(end.year, 1, 1)
         if window_start < year_start:
             window_start = year_start

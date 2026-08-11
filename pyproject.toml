@@ -8,3 +8,15 @@ version = "0.1.0"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+[tool.codespell]
+# Ref: https://github.com/codespell-project/codespell#using-a-config-file
+# Skip external harvested data (OpenAlex topics, DataCite/EMDB test fixtures)
+# and generated egg-info metadata.
+skip = '.git,.git-meta,.gitignore,.gitattributes,*.ndjson,*.csv,src/sindex.egg-info'
+check-hidden = true
+# Ignore embedded base64 images in Jupyter notebooks.
+ignore-regex = '^\s*"image/\S+": ".*'
+# nd - short variable name (normalized DOI) and filename suffix (.ndjson) in notebook output
+# te - Dutch word "te" appearing in DataCite descriptions in test notebooks
+# crossreferences - EMDB API response field name (must not be renamed)
+ignore-words-list = 'nd,te,crossreferences'
