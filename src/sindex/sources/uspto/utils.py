@@ -67,7 +67,7 @@ def count_patents_in_zip_folder(input_dir):
 
 def count_stats_in_file_fast(file_path):
     """
-    Worker function to count number of lines, dois, emdb ids in ouput file
+    Worker function to count number of lines, dois, emdb ids in output file
     """
     c_patents = 0
     c_dois = 0

@@ -248,7 +248,7 @@ def download_patents_linear_old(json_file_path, api_key, output_dir):
                     for chunk in r.iter_content(chunk_size=8192):
                         f.write(chunk)
 
-            # Sucess
+            # Success
             stats["downloaded"] += 1
             wait_time = random.uniform(10.0, 15.0)
             time.sleep(wait_time)

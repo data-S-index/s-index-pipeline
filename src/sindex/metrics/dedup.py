@@ -49,7 +49,7 @@ def dedupe_citations_by_link(citations: List[Dict]) -> List[Dict]:
             order.append(link)
             continue
 
-        # If not first occurence compare with existing one
+        # If not first occurrence compare with existing one
         existing = grouped[link]
 
         date_existing_str = existing.get("citation_date")
