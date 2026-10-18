@@ -1,4 +1,4 @@
-from typing import Dict, Iterator, Tuple
+from typing import Callable, Dict, Iterator, Tuple
 
 import requests
 
@@ -48,6 +48,7 @@ def stream_datacite_records(
     citations_only: bool = False,
     session: requests.Session | None = None,  # pass a shared session
     timeout: Tuple[int, int] = (10, 240),  # (connect, read) seconds
+    on_page: Callable[[int, int | None], None] | None = None,
 ) -> Iterator[Dict]:
     """
     Stream raw DataCite Dataset records created within a date range, optionally
@@ -82,6 +83,9 @@ def stream_datacite_records(
             connect = How long to wait while trying to open a TCP connection to the server.
             read_timeout: How long to wait after the connection is established for
                 the server to start sending data.
+        on_page: Optional callback called after each page is fetched with
+            (records fetched so far, total matching records reported by the API
+            or None). Useful for showing progress.
 
     Yields:
         dict:
@@ -103,13 +107,19 @@ def stream_datacite_records(
         "page[cursor]": 1,
         "detail": str(detail).lower(),
     }
+    fetched = 0
 
     while True:
         r = s.get(base_url, params=params, timeout=timeout)
         r.raise_for_status()
         payload = r.json()
+        page = payload.get("data", [])
 
-        for rec in payload.get("data", []):
+        if on_page:
+            fetched += len(page)
+            on_page(fetched, (payload.get("meta") or {}).get("total"))
+
+        for rec in page:
             yield rec
 
         next_url = payload.get("links", {}).get("next")

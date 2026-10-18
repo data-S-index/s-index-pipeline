@@ -15,3 +15,11 @@ structure.txt
 /build
 /.virtual_documents
 /anaconda_projects
+
+# Automation script outputs
+/automation/output
+/automation/state
+
+.env
+#stupid apple
+.DS_Store 

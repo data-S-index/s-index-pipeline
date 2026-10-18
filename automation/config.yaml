@@ -1,0 +1,27 @@
+# Settings for the automation scripts.
+#
+# Secrets are read from the repo's .env file or the environment:
+#   BUNNY_STORAGE_PASSWORD  password of the storage zone below
+#                           (bunny.net dashboard > Storage > zone > FTP & API Access)
+#   DATABASE_URL            Postgres connection string (datacite_load.py only)
+
+# bunny.net storage zone holding the harvested files
+storage:
+  zone: "scholar-data-22f7"
+  # Storage API endpoint of the zone's main region, shown on the zone's
+  # "FTP & API Access" page (e.g. ny.storage.bunnycdn.com for New York)
+  host: "la.storage.bunnycdn.com"
+
+# datacite_harvest.py: DataCite -> storage zone
+# (The first day to harvest and the days per run are set in common.py.)
+datacite_harvest:
+  # DataCite cursor page size (max 1000)
+  page_size: 1000
+
+  # Seconds to wait between days
+  sleep_seconds: 0.5
+
+# datacite_load.py: storage zone -> Postgres
+datacite_load:
+  # Records inserted per batch (one round trip per table per batch)
+  batch_size: 500

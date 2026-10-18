@@ -1,0 +1,414 @@
+generator client {
+    provider        = "prisma-client"
+    previewFeatures = ["strictUndefinedChecks"]
+    output          = "../shared/generated/"
+    engineType      = "client"
+}
+
+// generator kysely {
+//   provider = "prisma-kysely"
+
+//   output   = "../types"
+//   fileName = "kysely.ts"
+// }
+
+datasource db {
+    provider = "postgresql"
+}
+
+model User {
+    id String @id @default(ulid())
+
+    anonymous Boolean @default(true)
+
+    login    String @unique // email or username(anonymous accounts)
+    password String
+
+    givenName       String   @default("") // first name
+    familyName      String   @default("") // last name
+    additionalNames String[] @default([])
+
+    affiliation     String?
+    orcid           String?
+    homePage        String?
+    areasOfInterest String[] @default([])
+
+    created DateTime @default(now())
+    updated DateTime @updatedAt
+
+    admin Boolean @default(false)
+
+    userDatasets           UserDataset[]
+    userEmailVerifications UserEmailVerification[]
+    userForgotPasswords    UserForgotPassword[]
+}
+
+model UserEmailVerification {
+    user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+    userId String
+
+    verificationToken String   @unique
+    expiresAt         DateTime
+
+    created DateTime @default(now())
+    updated DateTime @updatedAt
+}
+
+model UserForgotPassword {
+    user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+    userId String
+
+    resetToken String   @unique
+    expiresAt  DateTime
+
+    created DateTime @default(now())
+    updated DateTime @updatedAt
+}
+
+model UserDataset {
+    user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+    userId String
+
+    dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+    datasetId Int
+
+    created DateTime @default(now())
+    updated DateTime @updatedAt
+
+    @@id([userId, datasetId])
+    @@index([userId])
+    @@index([datasetId])
+}
+
+model AutomatedUser {
+    id Int @id @default(autoincrement())
+
+    name            String   @default("")
+    nameIdentifiers String[] @default([])
+    affiliations    String[] @default([])
+
+    automatedUserDatasets AutomatedUserDataset[]
+    automatedUserSIndexes AutomatedUserSIndex[]
+}
+
+model AutomatedUserDataset {
+    automatedUser   AutomatedUser @relation(fields: [automatedUserId], references: [id], onDelete: Cascade)
+    automatedUserId Int
+
+    dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+    datasetId Int
+
+    created DateTime @default(now())
+    updated DateTime @updatedAt
+
+    @@id([automatedUserId, datasetId])
+}
+
+model AutomatedOrganization {
+    id Int @id @default(autoincrement())
+
+    name String @default("")
+
+    automatedOrganizationDatasets AutomatedOrganizationDataset[]
+    automatedOrganizationSIndexes AutomatedOrganizationSIndex[]
+}
+
+model AutomatedOrganizationDataset {
+    automatedOrganization   AutomatedOrganization @relation(fields: [automatedOrganizationId], references: [id], onDelete: Cascade)
+    automatedOrganizationId Int
+
+    dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+    datasetId Int
+
+    created DateTime @default(now())
+    updated DateTime @updatedAt
+
+    @@id([automatedOrganizationId, datasetId])
+}
+
+model Dataset {
+    id Int @id @default(autoincrement())
+
+    source String? // The source of the dataset - e.g. "datacite", "emdb", "pmid", etc.
+
+    identifier     String
+    identifierType String // doi, emdb, pmid, etc.
+
+    url String? // Might be important in the future for linking to the dataset if the identifier is not enough
+
+    title       String
+    description String?
+    version     String?
+
+    publisher   String?
+    publisherId String   @default("")
+    publishedAt DateTime
+    pubYear     Int      @default(0)
+
+    subjects String[]
+
+    created DateTime @default(now())
+    updated DateTime @updatedAt
+
+    datasetIdentifiers DatasetIdentifier[]
+    datasetAuthors     DatasetAuthor[]
+
+    citations           Citation[]
+    mentions            Mention[]
+    fujiScore           FujiScore?
+    datasetTopic        DatasetTopic?
+    normalizationFactor NormalizationFactor?
+
+    datasetClaims                 UserDataset[]
+    dindices                      DIndex[]
+    automatedUserDatasets         AutomatedUserDataset[]
+    automatedOrganizationDatasets AutomatedOrganizationDataset[]
+    datasetRights                 DatasetRights[]
+
+    @@unique([identifierType, identifier])
+    @@index([identifier])
+    @@index([publishedAt])
+}
+
+model DatasetAuthor {
+    id BigInt @id @default(autoincrement())
+
+    dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+    datasetId Int
+
+    nameType String?
+    name     String  @default("")
+
+    nameIdentifiers String[] @default([])
+    affiliations    String[] @default([])
+
+    created DateTime @default(now())
+    updated DateTime @updatedAt
+
+    @@index([datasetId])
+}
+
+model DatasetIdentifier {
+    id Int @id @default(autoincrement())
+
+    dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+    datasetId Int
+
+    identifier     String
+    identifierType String // doi, emdb, pmid, etc.
+
+    created DateTime @default(now())
+    updated DateTime @updatedAt
+
+    @@unique([datasetId, identifierType, identifier])
+    @@index([identifierType, identifier])
+}
+
+model DatasetTopic {
+    datasetId Int     @id
+    dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+    topicId   String?
+    topicName String?
+
+    subfieldId   String?
+    subfieldName String?
+
+    fieldId   String?
+    fieldName String?
+
+    domainId   String?
+    domainName String?
+
+    score  Float?
+    source String?
+
+    created DateTime @default(now())
+    updated DateTime @default(now()) @updatedAt
+}
+
+model DatasetRights {
+    id BigInt @id @default(autoincrement())
+
+    dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+    datasetId Int
+
+    name       String? // e.g. Creative Commons Attribution 4.0 International License
+    identifier String? // e.g. CC-BY-4.0, CC0, etc.
+    uri        String? // e.g. https://creativecommons.org/licenses/by/4.0/
+
+    created DateTime @default(now())
+    updated DateTime @updatedAt
+
+    @@index([datasetId])
+}
+
+model Citation {
+    id BigInt @id @default(autoincrement())
+
+    dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+    datasetId Int
+
+    citationLink String
+
+    datacite Boolean @default(false)
+    mdc      Boolean @default(false)
+    openAlex Boolean @default(false)
+
+    citedDate      DateTime
+    citationWeight Float    @default(1.0) // The weight of the citation (1.0 = 100% of the citation impact)
+
+    created DateTime @default(now())
+    updated DateTime @updatedAt
+
+    @@unique([datasetId, citationLink])
+    @@index([datasetId])
+    @@index([citedDate])
+}
+
+model FujiScore {
+    datasetId Int     @id
+    dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+    score          Float? // default is null so that we can store the score later
+    evaluationDate DateTime
+
+    metricVersion   String
+    softwareVersion String
+
+    created DateTime @default(now())
+    updated DateTime @updatedAt
+}
+
+model FujiJob {
+    datasetId Int @id
+
+    created DateTime @default(now())
+    updated DateTime @default(now()) @updatedAt
+}
+
+model Mention {
+    id BigInt @id @default(autoincrement())
+
+    dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+    datasetId Int
+
+    mentionLink String
+    source      String[] // github, linkedin, twitter, software heritage, etc.
+
+    mentionedDate DateTime
+    mentionWeight Float    @default(1.0) // The weight of the mention (1.0 = 100% of the mention impact)
+
+    created DateTime @default(now())
+    updated DateTime @updatedAt
+
+    @@unique([datasetId, mentionLink, source])
+    @@index([datasetId])
+    @@index([mentionedDate])
+}
+
+model NormalizationFactor {
+    datasetId Int     @id
+    dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+    ft  Float?
+    ctw Float?
+    mtw Float?
+
+    topicIdUsed      String?
+    yearUsed         Int?
+    topicIdRequested String?
+    yearRequested    Int?
+    usedYearClamp    Boolean?
+
+    created DateTime @default(now())
+    updated DateTime @updatedAt
+}
+
+model DIndex {
+    id BigInt @id @default(autoincrement())
+
+    dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+    datasetId Int
+
+    score Float
+    year  Int // 4 digit year
+
+    created DateTime @default(now())
+
+    @@index([datasetId])
+}
+
+model DIndexJob {
+    datasetId Int @id
+
+    created DateTime @default(now())
+    updated DateTime @default(now()) @updatedAt
+}
+
+model AutomatedUserSIndex {
+    id BigInt @id @default(autoincrement())
+
+    automatedUser   AutomatedUser @relation(fields: [automatedUserId], references: [id], onDelete: Cascade)
+    automatedUserId Int
+
+    score Float
+    year  Int // 4 digit year
+
+    created DateTime @default(now())
+
+    @@index([automatedUserId])
+}
+
+model AutomatedUserSIndexJob {
+    automatedUserId Int @id
+
+    created DateTime @default(now())
+    updated DateTime @default(now()) @updatedAt
+}
+
+model AutomatedOrganizationSIndex {
+    id BigInt @id @default(autoincrement())
+
+    automatedOrganization   AutomatedOrganization @relation(fields: [automatedOrganizationId], references: [id], onDelete: Cascade)
+    automatedOrganizationId Int
+
+    score Float
+    year  Int // 4 digit year
+
+    created DateTime @default(now())
+
+    @@index([automatedOrganizationId])
+}
+
+model AutomatedOrganizationSIndexJob {
+    automatedOrganizationId Int @id
+
+    created DateTime @default(now())
+    updated DateTime @default(now()) @updatedAt
+}
+
+// One row per source and day whose harvested records have been loaded into
+// Dataset by the pipeline's automation jobs (s-index-pipeline/automation)
+model IngestLog {
+    id Int @id @default(autoincrement())
+
+    source String // e.g. "datacite"
+    day    DateTime @db.Date // the day the records were created at the source
+
+    records  Int // records in the harvested file
+    inserted Int // new Dataset rows
+    skipped  Int // already in Dataset, or without an identifier
+    failed   Int // rejected by the database or not valid JSON
+
+    filePath        String // the harvested file in the storage zone
+    fileSha256      String
+    harvestedAt     DateTime
+    durationSeconds Float
+    runUrl          String? // GitHub Actions run that loaded the day, if any
+
+    created DateTime @default(now())
+    updated DateTime @updatedAt
+
+    @@unique([source, day])
+}

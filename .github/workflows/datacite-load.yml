@@ -1,0 +1,89 @@
+# Loads harvested DataCite days from the bunny.net storage zone into Postgres
+# (automation/datacite_load.py), one day per run. Runs after every
+# "DataCite harvest" run, whether or not it succeeded (a partly failed harvest
+# still has days to load), plus a daily fallback. Reaches the database over
+# Tailscale.
+#
+# Secrets:
+#   BUNNY_STORAGE_PASSWORD
+#   DATABASE_URL         using the database's Tailscale name or IP
+#   TAILSCALE_OAUTH_CLIENT_ID   Tailscale OAuth client with the auth_keys scope,
+#   TAILSCALE_OAUTH_SECRET      allowed to tag devices with tag:ci
+
+name: DataCite load
+
+on:
+  workflow_run:
+    workflows: ["DataCite harvest"]
+    types: [completed]
+  schedule:
+    - cron: "47 9 * * *" # daily at 09:47 UTC, in case a trigger was missed
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Single day to load (YYYY-MM-DD)"
+        required: false
+      start:
+        description: "First day of a range (YYYY-MM-DD)"
+        required: false
+      end:
+        description: "Last day of a range, inclusive (YYYY-MM-DD)"
+        required: false
+      max_days:
+        description: "Most days to load (blank = 1, 0 = no limit)"
+        required: false
+      force:
+        description: "Load days again that are already loaded"
+        type: boolean
+        default: false
+
+# Never run two loads at once; a new one waits for the running one
+concurrency:
+  group: datacite-load
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: automation/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r automation/requirements.txt
+
+      # Joins the tailnet as an ephemeral tag:ci device, removed after the job
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Load
+        env:
+          BUNNY_STORAGE_PASSWORD: ${{ secrets.BUNNY_STORAGE_PASSWORD }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          INPUT_DATE: ${{ inputs.date }}
+          INPUT_START: ${{ inputs.start }}
+          INPUT_END: ${{ inputs.end }}
+          INPUT_MAX_DAYS: ${{ inputs.max_days }}
+          INPUT_FORCE: ${{ inputs.force }}
+        run: |
+          args=()
+          [[ -n "$INPUT_DATE" ]] && args+=(--date "$INPUT_DATE")
+          [[ -n "$INPUT_START" ]] && args+=(--start "$INPUT_START")
+          [[ -n "$INPUT_END" ]] && args+=(--end "$INPUT_END")
+          [[ -n "$INPUT_MAX_DAYS" ]] && args+=(--max-days "$INPUT_MAX_DAYS")
+          [[ "$INPUT_FORCE" == "true" ]] && args+=(--force)
+
+          python automation/datacite_load.py "${args[@]}"

@@ -19,24 +19,31 @@ def add_datasets_db_from_ndjson(
     Contains dataset_id, id_type, pubyear, added_date (date dataset added to this DB).
 
     Args:
-        slim_folder: Folder containing .ndjson files.
+        slim_folder: Folder containing .ndjson files, or a single .ndjson file.
         output_db_path: Path to DuckDB file (created if it doesn't exist).
         id_type: Identifier type to prefer, e.g. 'doi' or 'emdb_id'.
         added_date: Timestamp to use for added_date. In format "YYYY-MM-DD". Defaults to current timestamp.
+
+    Returns:
+        {"new": <datasets added>, "total": <datasets in DB>}, or None if there
+        were no valid files.
     """
     if id_type not in VALID_ID_TYPES:
         raise ValueError(f"id_type must be one of {VALID_ID_TYPES}, got {id_type!r}")
 
-    all_files = [
-        os.path.join(slim_folder, f)
-        for f in os.listdir(slim_folder)
-        if f.endswith(".ndjson")
-    ]
+    if os.path.isfile(slim_folder):
+        all_files = [slim_folder]
+    else:
+        all_files = [
+            os.path.join(slim_folder, f)
+            for f in os.listdir(slim_folder)
+            if f.endswith(".ndjson")
+        ]
     valid_files = [f for f in all_files if os.path.getsize(f) > 0]
 
     if not valid_files:
         print("No valid ndjson files found.")
-        return
+        return None
 
     timestamp = (
         datetime.strptime(added_date, "%Y-%m-%d")
@@ -125,3 +132,4 @@ def add_datasets_db_from_ndjson(
     print(f"\nSuccess! DB at: {output_db_path}")
     print(f"New datasets added: {new_count:,}")
     print(f"Total datasets in DB: {total_count:,}")
+    return {"new": new_count, "total": total_count}

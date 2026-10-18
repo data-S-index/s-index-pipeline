@@ -1,0 +1,11 @@
+# Dependencies of the automation scripts only (versions match the root
+# requirements.txt, which also pulls in the notebook and ML stack these jobs
+# don't need). Used by the GitHub Actions workflows.
+duckdb==1.4.3  # imported by sindex.sources.datacite.jobs
+orjson==3.11.5
+psycopg[binary]==3.2.10
+python-dateutil==2.9.0.post0
+python-dotenv==1.1.1
+pyyaml==6.0.3
+requests==2.32.5
+urllib3==2.5.0
