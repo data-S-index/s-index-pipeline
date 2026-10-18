@@ -435,7 +435,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    return  # disable execution for now
+    # return  # disable execution for now
     """Load every harvested day in the requested range that is not loaded yet."""
     args = parse_args()
     cfg = common.load_config(args.config)
