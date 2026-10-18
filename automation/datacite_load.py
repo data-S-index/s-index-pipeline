@@ -20,9 +20,6 @@ A record is skipped if "Dataset" already has a row with the same identifier
 and identifierType (existing rows are not updated). A record the database
 rejects is counted as failed and skipped without undoing the rest of the day.
 
-Every inserted "Dataset" row gets url = TEST_URL so the uploaded records can
-be found and deleted later (see the SQL below).
-
 Settings come from automation/config.yaml (`storage` and `datacite_load`
 sections). DATABASE_URL and BUNNY_STORAGE_PASSWORD
 are read from the repo's .env file or the environment.
@@ -71,9 +68,6 @@ from bunny_storage import BunnyStorage  # noqa: E402
 
 SOURCE = "datacite"
 
-# Marks every dataset inserted by this script, so they can be deleted later
-TEST_URL = "test"
-
 # SQL to run on the database by hand:
 #
 # -- After any bulk load that sets ids explicitly (e.g. COPY), move the id
@@ -84,12 +78,6 @@ TEST_URL = "test"
 #               (SELECT MAX(id) FROM "DatasetAuthor"));
 # SELECT setval(pg_get_serial_sequence('"DatasetIdentifier"', 'id'),
 #               (SELECT MAX(id) FROM "DatasetIdentifier"));
-#
-# -- Delete everything this script inserted ("DatasetAuthor" and
-# -- "DatasetIdentifier" rows are removed by their cascading foreign keys),
-# -- and its log rows so the days are loaded again
-# DELETE FROM "Dataset" WHERE url = 'test';
-# DELETE FROM "IngestLog" WHERE source = 'datacite';
 
 DATASET_SQL = """
     INSERT INTO "Dataset" (source, identifier, "identifierType", url, title,
@@ -181,7 +169,7 @@ def dataset_params(record: dict, identifier: tuple[str, str], now: datetime) -> 
         record.get("source", ""),
         identifier[0],
         identifier[1],
-        TEST_URL,
+        None,  # url
         clean(record.get("title", "")),
         clean(record.get("description")),
         record.get("version"),
