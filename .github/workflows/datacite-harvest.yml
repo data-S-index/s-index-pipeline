@@ -3,7 +3,6 @@
 # "DataCite load" workflow loads the files into Postgres when this finishes.
 #
 # Secrets: BUNNY_STORAGE_PASSWORD
-# Variables (optional): SINDEX_USER_AGENT, e.g. "scholar-data (mailto:you@example.org)"
 
 name: DataCite harvest
 
@@ -58,16 +57,12 @@ jobs:
       - name: Harvest
         env:
           BUNNY_STORAGE_PASSWORD: ${{ secrets.BUNNY_STORAGE_PASSWORD }}
-          SINDEX_USER_AGENT: ${{ vars.SINDEX_USER_AGENT }}
           INPUT_DATE: ${{ inputs.date }}
           INPUT_START: ${{ inputs.start }}
           INPUT_END: ${{ inputs.end }}
           INPUT_MAX_DAYS: ${{ inputs.max_days }}
           INPUT_FORCE: ${{ inputs.force }}
         run: |
-          # Fall back to the package's default user agent if the variable isn't set
-          [[ -z "$SINDEX_USER_AGENT" ]] && unset SINDEX_USER_AGENT
-
           args=()
           [[ -n "$INPUT_DATE" ]] && args+=(--date "$INPUT_DATE")
           [[ -n "$INPUT_START" ]] && args+=(--start "$INPUT_START")

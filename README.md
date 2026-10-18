@@ -80,7 +80,6 @@ Secrets are read from `.env` or the environment (see [`.env.example`](.env.examp
 | :----------------------- | :-------------------------- | :--------------------------------------------------------------------- |
 | `BUNNY_STORAGE_PASSWORD` | both scripts                | Storage zone password (zone → FTP & API Access in bunny.net)           |
 | `DATABASE_URL`           | `datacite_load.py`          | Postgres connection string                                             |
-| `SINDEX_USER_AGENT`      | `datacite_harvest.py` (opt) | e.g. `"your-name (mailto:you@example.org)"` for DataCite's polite pool |
 
 The DataCite automation is split into two jobs that only meet in the storage zone:
 
@@ -149,7 +148,7 @@ Both scripts work on the days from `START_DATE` (hardcoded in [`common.py`](auto
 
 #### GitHub Actions
 
-- [`datacite-harvest.yml`](.github/workflows/datacite-harvest.yml) runs the harvest twice a day (03:17 and 15:17 UTC), one day per run, so a backlog shrinks by one day a day; to catch up faster, run it once with `--max-days 0`. Needs the `BUNNY_STORAGE_PASSWORD` secret and, optionally, the `SINDEX_USER_AGENT` variable.
+- [`datacite-harvest.yml`](.github/workflows/datacite-harvest.yml) runs the harvest twice a day (03:17 and 15:17 UTC), one day per run, so a backlog shrinks by one day a day; to catch up faster, run it once with `--max-days 0`. Needs the `BUNNY_STORAGE_PASSWORD` secret.
 - [`datacite-load.yml`](.github/workflows/datacite-load.yml) runs the load (one day per run) after every harvest run, plus daily at 09:47 UTC as a fallback. It reaches the database over Tailscale as an ephemeral `tag:ci` device. Needs the `BUNNY_STORAGE_PASSWORD`, `DATABASE_URL` (using the database's Tailscale address), `TAILSCALE_OAUTH_CLIENT_ID` and `TAILSCALE_OAUTH_SECRET` secrets.
 
 Both can be started by hand from the Actions tab with a date, range, day limit or `force`. Scheduled and `workflow_run` triggers only fire for workflows on the default branch.
