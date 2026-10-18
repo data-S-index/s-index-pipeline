@@ -9,7 +9,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from multiprocessing import Pool
 from pathlib import Path
-from typing import Dict, List
+from typing import Callable, Dict, List
 
 import duckdb
 import orjson
@@ -47,6 +47,8 @@ def harvest_datacite_datasets_for_date_range_to_ndjson(
     page_floor: int = 100,  # minimum fallback page size
     session: requests.Session | None = None,  # optional shared session
     timeout: tuple[int, int] = (10, 240),  # (connect, read) seconds
+    show_progress: bool = True,
+    on_page: Callable[[int, int | None], None] | None = None,
 ) -> int:
     """
     Harvest DataCite dataset records for an inclusive date range, writing one NDJSON file per date window.
@@ -77,6 +79,12 @@ def harvest_datacite_datasets_for_date_range_to_ndjson(
         page_floor: Minimum allowed page_size when backing off after ReadTimeouts.
         session: Optional shared requests.Session; if None, a retry-configured session is created.
         timeout: (connect, read) timeout passed to DataCite requests.
+        show_progress: If True, print a single, in-place updating progress line
+            (records fetched / total, percent, rate) while each window downloads.
+        on_page: Optional callback called after each page with (records fetched
+            so far in the window, total reported by the API or None). Replaces
+            the in-place progress line, e.g. to log progress as separate lines
+            where carriage returns don't work (CI logs).
 
     Returns:
         Total number of records written across all windows.
@@ -128,6 +136,23 @@ def harvest_datacite_datasets_for_date_range_to_ndjson(
             )
             range_count = 0
             wrote_any = False
+            t_window = time.monotonic()
+
+            def _print_progress(fetched: int, total: int | None) -> None:
+                elapsed = time.monotonic() - t_window
+                rate = fetched / elapsed if elapsed > 0 else 0
+                if total:
+                    msg = f"{fetched:,} / {total:,} records ({fetched / total:.1%})"
+                else:
+                    msg = f"{fetched:,} records"
+                print(
+                    f"\r  {msg} | {rate:,.0f} rec/s | {elapsed:,.0f}s elapsed   ",
+                    end="",
+                    flush=True,
+                )
+
+            if show_progress and not on_page:
+                _print_progress(0, None)  # shows the first request is in flight
 
             try:
                 with open(out_path, "w", encoding="utf-8", buffering=1024 * 1024) as f:
@@ -140,11 +165,16 @@ def harvest_datacite_datasets_for_date_range_to_ndjson(
                         citations_only=citations_only,
                         session=s,
                         timeout=timeout,
+                        on_page=on_page
+                        or (_print_progress if show_progress else None),
                     ):
                         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
                         total_records += 1
                         range_count += 1
                         wrote_any = True
+
+                if show_progress and not on_page:
+                    print()  # end the progress line
 
                 if not wrote_any and skip_empty_files:
                     try:
@@ -157,6 +187,8 @@ def harvest_datacite_datasets_for_date_range_to_ndjson(
                 break  # window succeeded
 
             except requests.exceptions.ReadTimeout:
+                if show_progress and not on_page:
+                    print()
                 if ps > page_floor:
                     ps = max(page_floor, ps // 2)
                     print(f"  ReadTimeout; retrying with smaller page_size={ps} ...")
@@ -176,6 +208,8 @@ def harvest_datacite_datasets_for_date_range_to_ndjson(
                 raise
 
             except requests.exceptions.RequestException as e:
+                if show_progress and not on_page:
+                    print()
                 print(f"  Harvest failed at range {start_iso} → {end_iso}: {e}")
                 print(
                     f"  Resume tip: restart later with start_date_str='{start_date_str}' "

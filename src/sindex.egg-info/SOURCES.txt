@@ -19,7 +19,6 @@ src/sindex/metrics/dedup.py
 src/sindex/metrics/fairscores.py
 src/sindex/metrics/jobs.py
 src/sindex/metrics/mentions.py
-src/sindex/metrics/mocknormalization.py
 src/sindex/metrics/normalization.py
 src/sindex/metrics/topics.py
 src/sindex/metrics/weights.py
@@ -58,7 +57,9 @@ src/sindex/sources/openalex/discovery.py
 src/sindex/sources/openalex/jobs.py
 src/sindex/sources/openalex/normalize.py
 src/sindex/sources/openalex/snapshot.py
+src/sindex/sources/swh/SHA1_extract.py
 src/sindex/sources/swh/normalize.py
+src/sindex/sources/swh/normalize_DOIs.py
 src/sindex/sources/uspto/client.py
 src/sindex/sources/uspto/discovery.py
 src/sindex/sources/uspto/jobs.py
