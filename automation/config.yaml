@@ -39,7 +39,7 @@ datacite_index:
   index: "dataset"
 
   # Records looked up and sent to Meilisearch per request
-  batch_size: 5000
+  batch_size: 500
 
   # Seconds to wait for each Meilisearch task to finish
   task_timeout_seconds: 1800

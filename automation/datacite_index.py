@@ -224,29 +224,55 @@ def index_day(  # pylint: disable=too-many-arguments,too-many-locals
     day_iso = row["day"].isoformat()
     local_file = work_dir / f"{SOURCE}-{day_iso}.ndjson.gz"
 
-    print(f"[{day_iso}] Downloading {row['filePath']}")
+    print(f"[{day_iso}] Downloading {row['filePath']}", flush=True)
+    t_download = time.monotonic()
     storage.download_file(row["filePath"], local_file, sha256=row["fileSha256"])
+    print(
+        f"[{day_iso}] Downloaded {local_file.stat().st_size / 1e6:,.1f} MB "
+        f"in {time.monotonic() - t_download:,.1f}s",
+        flush=True,
+    )
 
     t0 = time.monotonic()
     counts = {"records": 0, "failed": 0}
     indexed = 0
     tasks = []
     try:
-        print(f"[{day_iso}] Sending {row['records']:,} records")
+        print(
+            f"[{day_iso}] Sending {row['records']:,} records "
+            f"in batches of {cfg['batch_size']:,}",
+            flush=True,
+        )
         progress = common.ProgressLog(f"[{day_iso}] Sent")
         with conn.cursor(row_factory=dict_row) as cur:
-            for batch in read_batches(local_file, cfg["batch_size"], counts):
+            for n, batch in enumerate(
+                read_batches(local_file, cfg["batch_size"], counts), start=1
+            ):
+                t_batch = time.monotonic()
                 documents = fetch_documents(cur, batch)
+                t_fetch = time.monotonic() - t_batch
+                task = "-"
                 if documents:
-                    tasks.append(search.add_documents(documents))
+                    task = search.add_documents(documents)
+                    tasks.append(task)
                     indexed += len(documents)
+                print(
+                    f"  [{day_iso}] Batch {n:,}: fetched {len(documents):,} of "
+                    f"{len(batch):,} ({t_fetch:.1f}s) | added as task {task} "
+                    f"({time.monotonic() - t_batch - t_fetch:.1f}s) | "
+                    f"{counts['records']:,} / {row['records']:,} records",
+                    flush=True,
+                )
                 progress(counts["records"], row["records"])
+        progress(counts["records"], row["records"], final=True)
     finally:
         local_file.unlink(missing_ok=True)
 
-    print(f"[{day_iso}] Waiting for {len(tasks)} Meilisearch task(s)")
-    for uid in tasks:
+    print(f"[{day_iso}] Waiting for {len(tasks)} Meilisearch task(s)", flush=True)
+    waiting = common.ProgressLog(f"[{day_iso}] Tasks done", every_seconds=10)
+    for n, uid in enumerate(tasks, start=1):
         search.wait_for_task(uid, cfg["task_timeout_seconds"])
+        waiting(n, len(tasks), final=n == len(tasks))
 
     # Only if the day wasn't loaded again (--force) in the meantime
     conn.execute(
@@ -355,9 +381,7 @@ def main() -> None:
                     failed.append(day)
 
     if todo:
-        common.report(
-            f"Done. Indexed {len(todo) - len(failed)} of {len(todo)} day(s)."
-        )
+        common.report(f"Done. Indexed {len(todo) - len(failed)} of {len(todo)} day(s).")
     if failed:
         sys.exit(f"{len(failed)} day(s) failed: {', '.join(map(str, failed))}")
 
