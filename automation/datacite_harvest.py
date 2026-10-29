@@ -167,7 +167,7 @@ def harvest_day(  # pylint: disable=too-many-locals
     finally:
         shutil.rmtree(day_dir, ignore_errors=True)
 
-    print(
+    common.report(
         f"[{day_iso}] Raw: {n_raw:,} | Slim: {kept:,} | Bad: {bad:,} | "
         f"Took: {manifest['duration_seconds']:,.0f}s"
     )
@@ -240,14 +240,17 @@ def main() -> None:
                 storage.delete(common.manifest_path(SOURCE, day))
             try:
                 harvest_day(day, hcfg, storage, session, Path(work_dir))
-            except Exception:  # pylint: disable=broad-exception-caught
-                print(f"[{day.isoformat()}] Failed:")
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                common.report(f"[{day.isoformat()}] Failed: {e!r}")
                 traceback.print_exc()
                 failed.append(day)
             if hcfg.get("sleep_seconds") and i < len(todo) - 1:
                 time.sleep(hcfg["sleep_seconds"])
 
-    print(f"Done. Harvested {len(todo) - len(failed)} of {len(todo)} day(s).")
+    if todo:
+        common.report(
+            f"Done. Harvested {len(todo) - len(failed)} of {len(todo)} day(s)."
+        )
     if failed:
         sys.exit(f"{len(failed)} day(s) failed: {', '.join(map(str, failed))}")
 

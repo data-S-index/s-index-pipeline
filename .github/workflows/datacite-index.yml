@@ -6,6 +6,7 @@
 #
 # Secrets:
 #   BUNNY_STORAGE_PASSWORD
+#   DISCORD_WEBHOOK_URL  channel webhook the run's result is posted to
 #   DATABASE_URL         using the database's Tailscale name or IP
 #   MEILISEARCH_API_URL  Meilisearch URL and a key that can add documents
 #   MEILISEARCH_API_KEY
@@ -46,6 +47,10 @@ concurrency:
 
 permissions:
   contents: read
+
+# Lines the script reports (common.report), posted to Discord by the last step
+env:
+  RUN_REPORT: ${{ github.workspace }}/run-report.txt
 
 jobs:
   index:
@@ -91,3 +96,10 @@ jobs:
           [[ "$INPUT_FORCE" == "true" ]] && args+=(--force)
 
           python automation/datacite_index.py "${args[@]}"
+
+      # Runs even if an earlier step failed or the run was cancelled
+      - name: Post to Discord
+        if: always()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python3 automation/notify_discord.py "DataCite index" "${{ job.status }}"

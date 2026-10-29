@@ -113,6 +113,21 @@ class ProgressLog:  # pylint: disable=too-few-public-methods
         )
 
 
+def report(message: str) -> None:
+    """
+    Print `message` and add it to the run's report.
+
+    The report is the file named by the RUN_REPORT environment variable (set
+    by the workflows), which notify_discord.py posts when the job finishes.
+    Without RUN_REPORT, this just prints.
+    """
+    print(message, flush=True)
+    path = os.environ.get("RUN_REPORT")
+    if path:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(message + "\n")
+
+
 def github_run_url() -> str | None:
     """Return the URL of the current GitHub Actions run, or None outside Actions."""
     env = os.environ

@@ -253,7 +253,7 @@ def index_day(  # pylint: disable=too-many-arguments,too-many-locals
         MARK_INDEXED_SQL,
         (datetime.now(timezone.utc), indexed, SOURCE, row["day"], row["fileSha256"]),
     )
-    print(
+    common.report(
         f"[{day_iso}] Indexed: {indexed:,} | "
         f"Missing: {counts['records'] - counts['failed'] - indexed:,} | "
         f"Took: {time.monotonic() - t0:,.0f}s"
@@ -309,7 +309,7 @@ def main() -> None:
     days = common.resolve_days(args)
 
     if not args.status and maintenance_mode(cfg["datacite_load"]["maintenance_url"]):
-        print("The site is in maintenance mode; not indexing anything.")
+        common.report("The site is in maintenance mode; not indexing anything.")
         return
 
     with psycopg.connect(common.get_secret("DATABASE_URL"), autocommit=True) as conn:
@@ -341,7 +341,7 @@ def main() -> None:
         with tempfile.TemporaryDirectory(prefix="datacite-index-") as work_dir:
             for day in todo:
                 if maintenance_mode(cfg["datacite_load"]["maintenance_url"]):
-                    print(
+                    common.report(
                         f"The site went into maintenance mode; stopping before "
                         f"{day.isoformat()}."
                     )
@@ -349,12 +349,15 @@ def main() -> None:
                     break
                 try:
                     index_day(rows[day], conn, storage, search, icfg, Path(work_dir))
-                except Exception:  # pylint: disable=broad-exception-caught
-                    print(f"[{day.isoformat()}] Failed:")
+                except Exception as e:  # pylint: disable=broad-exception-caught
+                    common.report(f"[{day.isoformat()}] Failed: {e!r}")
                     traceback.print_exc()
                     failed.append(day)
 
-    print(f"Done. Indexed {len(todo) - len(failed)} of {len(todo)} day(s).")
+    if todo:
+        common.report(
+            f"Done. Indexed {len(todo) - len(failed)} of {len(todo)} day(s)."
+        )
     if failed:
         sys.exit(f"{len(failed)} day(s) failed: {', '.join(map(str, failed))}")
 

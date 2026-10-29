@@ -383,7 +383,7 @@ def load_day(  # pylint: disable=too-many-arguments,too-many-locals
     finally:
         local_file.unlink(missing_ok=True)
 
-    print(
+    common.report(
         f"[{day_iso}] Inserted: {counts['inserted']:,} | "
         f"Skipped: {counts['skipped']:,} | Failed: {counts['failed']:,} | "
         f"Took: {duration:,.0f}s"
@@ -463,7 +463,7 @@ def main() -> None:
     harvested = common.list_harvested_days(storage, SOURCE, days)
 
     if not args.status and maintenance_mode(lcfg["maintenance_url"]):
-        print("The site is in maintenance mode; not loading anything.")
+        common.report("The site is in maintenance mode; not loading anything.")
         return
 
     # autocommit so each conn.transaction() block is its own transaction
@@ -485,7 +485,7 @@ def main() -> None:
         with tempfile.TemporaryDirectory(prefix="datacite-load-") as work_dir:
             for day in todo:
                 if maintenance_mode(lcfg["maintenance_url"]):
-                    print(
+                    common.report(
                         f"The site went into maintenance mode; stopping before "
                         f"{day.isoformat()}."
                     )
@@ -493,12 +493,15 @@ def main() -> None:
                     break
                 try:
                     load_day(day, conn, storage, lcfg, Path(work_dir), force=args.force)
-                except Exception:  # pylint: disable=broad-exception-caught
-                    print(f"[{day.isoformat()}] Failed:")
+                except Exception as e:  # pylint: disable=broad-exception-caught
+                    common.report(f"[{day.isoformat()}] Failed: {e!r}")
                     traceback.print_exc()
                     failed.append(day)
 
-    print(f"Done. Loaded {len(todo) - len(failed)} of {len(todo)} day(s).")
+    if todo:
+        common.report(
+            f"Done. Loaded {len(todo) - len(failed)} of {len(todo)} day(s)."
+        )
     if failed:
         sys.exit(f"{len(failed)} day(s) failed: {', '.join(map(str, failed))}")
 
