@@ -3,7 +3,10 @@
 # Secrets are read from the repo's .env file or the environment:
 #   BUNNY_STORAGE_PASSWORD  password of the storage zone below
 #                           (bunny.net dashboard > Storage > zone > FTP & API Access)
-#   DATABASE_URL            Postgres connection string (datacite_load.py only)
+#   DATABASE_URL            Postgres connection string (datacite_load.py and
+#                           datacite_index.py)
+#   MEILISEARCH_API_URL     Meilisearch URL and API key (datacite_index.py only)
+#   MEILISEARCH_API_KEY
 
 # bunny.net storage zone holding the harvested files
 storage:
@@ -25,3 +28,18 @@ datacite_harvest:
 datacite_load:
   # Records inserted per batch (one round trip per table per batch)
   batch_size: 500
+
+  # Site endpoint returning {"maintenanceMode": true|false}; nothing is loaded
+  # while it is true (or while it can't be reached)
+  maintenance_url: "https://scholardata.io/api/maintenance"
+
+# datacite_index.py: Postgres -> Meilisearch
+datacite_index:
+  # Meilisearch index the datasets are added to
+  index: "dataset"
+
+  # Records looked up and sent to Meilisearch per request
+  batch_size: 5000
+
+  # Seconds to wait for each Meilisearch task to finish
+  task_timeout_seconds: 1800

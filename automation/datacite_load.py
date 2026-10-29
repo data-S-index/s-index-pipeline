@@ -20,6 +20,12 @@ A record is skipped if "Dataset" already has a row with the same identifier
 and identifierType (existing rows are not updated). A record the database
 rejects is counted as failed and skipped without undoing the rest of the day.
 
+Before connecting to the database, and again before each day, the script asks
+the site's maintenance endpoint (`maintenance_url` in the config) whether
+maintenance mode is on. If it is, the run stops without writing anything and
+exits successfully; if the endpoint can't be reached or gives an unexpected
+answer, the run stops with an error, also without writing.
+
 Settings come from automation/config.yaml (`storage` and `datacite_load`
 sections). DATABASE_URL and BUNNY_STORAGE_PASSWORD
 are read from the repo's .env file or the environment.
@@ -40,7 +46,8 @@ Usage:
     python automation/datacite_load.py --status
 
 Use --force to load days again that already have an "IngestLog" row (e.g.
-after re-harvesting them); their row is replaced with the new counts.
+after re-harvesting them); their row is replaced with the new counts and
+marked not indexed, so datacite_index.py indexes the day again.
 """
 
 from __future__ import annotations
@@ -58,11 +65,13 @@ from typing import Iterator
 
 import orjson
 import psycopg
+import requests
 from psycopg.rows import dict_row
 
 # pylint: disable=wrong-import-position,wrong-import-order
 import common  # noqa: E402  (also puts src/ on sys.path)
 from bunny_storage import BunnyStorage  # noqa: E402
+from sindex.core.http import make_session  # noqa: E402
 
 # pylint: enable=wrong-import-position,wrong-import-order
 
@@ -112,7 +121,10 @@ INGEST_LOG_SQL = """
         "harvestedAt" = EXCLUDED."harvestedAt",
         "durationSeconds" = EXCLUDED."durationSeconds",
         "runUrl" = EXCLUDED."runUrl",
-        updated = EXCLUDED.updated"""
+        updated = EXCLUDED.updated,
+        -- so datacite_index.py indexes the day again
+        "indexedAt" = NULL,
+        indexed = NULL"""
 
 EPOCH_FALLBACK = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
@@ -378,6 +390,24 @@ def load_day(  # pylint: disable=too-many-arguments,too-many-locals
     )
 
 
+def maintenance_mode(url: str) -> bool:
+    """
+    Return whether the site's maintenance endpoint says maintenance mode is on.
+
+    Exits with an error if the endpoint can't be reached or doesn't answer
+    with {"maintenanceMode": true|false}, so nothing is written then either.
+    """
+    try:
+        resp = make_session(total_retries=3).get(url, timeout=30)
+        resp.raise_for_status()
+        value = resp.json().get("maintenanceMode")
+    except (requests.RequestException, ValueError, AttributeError) as e:
+        sys.exit(f"Could not read maintenance mode from {url}: {e}")
+    if not isinstance(value, bool):
+        sys.exit(f"Unexpected maintenance response from {url}: {resp.text[:200]}")
+    return value
+
+
 def print_status(days: list[date], harvested: set[date], loaded: dict) -> None:
     """Print one status line per day in `days`, then a summary of all of them."""
     n_waiting = 0
@@ -432,6 +462,10 @@ def main() -> None:
     storage = common.make_storage(cfg)
     harvested = common.list_harvested_days(storage, SOURCE, days)
 
+    if not args.status and maintenance_mode(lcfg["maintenance_url"]):
+        print("The site is in maintenance mode; not loading anything.")
+        return
+
     # autocommit so each conn.transaction() block is its own transaction
     with psycopg.connect(common.get_secret("DATABASE_URL"), autocommit=True) as conn:
         loaded = loaded_days(conn, days)
@@ -450,6 +484,13 @@ def main() -> None:
         failed = []
         with tempfile.TemporaryDirectory(prefix="datacite-load-") as work_dir:
             for day in todo:
+                if maintenance_mode(lcfg["maintenance_url"]):
+                    print(
+                        f"The site went into maintenance mode; stopping before "
+                        f"{day.isoformat()}."
+                    )
+                    todo = todo[: todo.index(day)]
+                    break
                 try:
                     load_day(day, conn, storage, lcfg, Path(work_dir), force=args.force)
                 except Exception:  # pylint: disable=broad-exception-caught
