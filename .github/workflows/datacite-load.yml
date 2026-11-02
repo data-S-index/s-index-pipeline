@@ -1,8 +1,8 @@
 # Loads harvested DataCite days from the bunny.net storage zone into Postgres
 # (automation/datacite_load.py), one day per run. Runs after every
 # "DataCite harvest" run, whether or not it succeeded (a partly failed harvest
-# still has days to load), plus a daily fallback. Reaches the database over
-# Tailscale.
+# still has days to load), plus a fallback four times a day.
+# Reaches the database over Tailscale.
 #
 # Secrets:
 #   BUNNY_STORAGE_PASSWORD
@@ -18,7 +18,8 @@ on:
     workflows: ["DataCite harvest"]
     types: [completed]
   schedule:
-    - cron: "47 9 * * *" # daily at 09:47 UTC, in case a trigger was missed
+    # Four times a day, between harvests, in case a trigger was missed
+    - cron: "47 5,11,17,23 * * *" # 05:47, 11:47, 17:47 and 23:47 UTC
   workflow_dispatch:
     inputs:
       date:

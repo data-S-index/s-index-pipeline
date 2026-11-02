@@ -1,8 +1,8 @@
 # Adds loaded DataCite days from Postgres to the Meilisearch "dataset" index
 # (automation/datacite_index.py), one day per run. Runs after every
 # "DataCite load" run, whether or not it succeeded (a partly failed load still
-# has days to index), plus a daily fallback. Reaches the database over
-# Tailscale.
+# has days to index), plus a fallback four times a day.
+# Reaches the database over Tailscale.
 #
 # Secrets:
 #   BUNNY_STORAGE_PASSWORD
@@ -20,7 +20,8 @@ on:
     workflows: ["DataCite load"]
     types: [completed]
   schedule:
-    - cron: "17 11 * * *" # daily at 11:17 UTC, in case a trigger was missed
+    # Four times a day, after each load fallback, in case a trigger was missed
+    - cron: "17 1,7,13,19 * * *" # 01:17, 07:17, 13:17 and 19:17 UTC
   workflow_dispatch:
     inputs:
       date:
