@@ -42,6 +42,9 @@ Usage:
     python automation/datacite_load.py --date 2026-05-01
     python automation/datacite_load.py --start 2026-05-01 --end 2026-05-07
 
+    # Load the newest harvested day before START_DATE that isn't loaded yet
+    python automation/datacite_load.py --backfill
+
     # Show which days are harvested and loaded
     python automation/datacite_load.py --status
 
@@ -474,7 +477,10 @@ def main() -> None:
             print_status(days, harvested, loaded)
             return
 
-        todo = sorted(d for d in harvested if args.force or d not in loaded)
+        todo = sorted(
+            (d for d in harvested if args.force or d not in loaded),
+            reverse=args.backfill,
+        )
         print(
             f"{len(days)} day(s) in range, {len(harvested)} harvested, "
             f"{len(loaded)} already loaded, {len(todo)} to load."

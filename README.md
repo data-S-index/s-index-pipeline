@@ -136,6 +136,10 @@ python automation/datacite_load.py --date 2026-10-15 --force
 
 Both scripts work on the days from `START_DATE` (hardcoded in [`common.py`](automation/common.py), currently 2026-05-01) up to `END_DELAY_DAYS` (7) days before today (UTC). A harvested day is never revisited, so the week's delay lets records registered late, and today's still-incomplete records, be included. Each run processes **one day**, oldest first (override with `--max-days`, `0` = no limit), and keeps going past a failed day, exiting with an error at the end.
 
+With `--backfill`, the scripts instead work backwards from the day before `START_DATE` to `BACKFILL_OLDEST_DATE` (2011-01-01; DataCite has no Dataset records created before February 2011), newest first. `--backfill` can't be combined with `--date`, `--start` or `--end`.
+
+The harvest selects a day's records by DataCite's `created` **or** `registered` date, because a draft can be registered long after it was created and only appears in the API from then on. Some records have no `registered` date, so `created` is still needed. A record can therefore be harvested on two days; the load skips it the second time. `--backfill` uses `created` alone, since it reads older records as they are now.
+
 #### Configuration (`config.yaml`)
 
 | Section            | Key             | Description                                    |
@@ -150,6 +154,7 @@ Both scripts work on the days from `START_DATE` (hardcoded in [`common.py`](auto
 
 - [`datacite-harvest.yml`](.github/workflows/datacite-harvest.yml) runs the harvest twice a day (03:17 and 15:17 UTC), one day per run, so a backlog shrinks by one day a day; to catch up faster, run it once with `--max-days 0`. Needs the `BUNNY_STORAGE_PASSWORD` secret.
 - [`datacite-load.yml`](.github/workflows/datacite-load.yml) runs the load (one day per run) after every harvest run, plus daily at 09:47 UTC as a fallback. It reaches the database over Tailscale as an ephemeral `tag:ci` device. Needs the `BUNNY_STORAGE_PASSWORD`, `DATABASE_URL` (using the database's Tailscale address), `TAILSCALE_OAUTH_CLIENT_ID` and `TAILSCALE_OAUTH_SECRET` secrets.
+- [`datacite-backfill-harvest.yml`](.github/workflows/datacite-backfill-harvest.yml), [`datacite-backfill-load.yml`](.github/workflows/datacite-backfill-load.yml) and [`datacite-backfill-index.yml`](.github/workflows/datacite-backfill-index.yml) run the same three steps with `--backfill`, on their own schedules and concurrency groups, using the same secrets. By hand, they only take a day limit.
 
 Both can be started by hand from the Actions tab with a date, range, day limit or `force`. Scheduled and `workflow_run` triggers only fire for workflows on the default branch.
 

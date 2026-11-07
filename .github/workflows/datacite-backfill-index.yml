@@ -1,0 +1,86 @@
+# Adds backfilled DataCite days from Postgres to the Meilisearch "dataset" index
+# (automation/datacite_index.py --backfill), newest first, one day per run. Runs
+# after every "DataCite backfill load" run, whether or not it succeeded (a
+# partly failed load still has days to index), plus a fallback four times a day.
+# Reaches the database over Tailscale.
+#
+# Secrets:
+#   BUNNY_STORAGE_PASSWORD
+#   DISCORD_WEBHOOK_URL  channel webhook the run's result is posted to
+#   DATABASE_URL         using the database's Tailscale name or IP
+#   MEILISEARCH_API_URL  Meilisearch URL and a key that can add documents
+#   MEILISEARCH_API_KEY
+#   TAILSCALE_OAUTH_CLIENT_ID   Tailscale OAuth client with the auth_keys scope,
+#   TAILSCALE_OAUTH_SECRET      allowed to tag devices with tag:ci
+
+name: DataCite backfill index
+
+on:
+  workflow_run:
+    workflows: ["DataCite backfill load"]
+    types: [completed]
+  schedule:
+    # Four times a day, after each load fallback, in case a trigger was missed
+    - cron: "17 4,10,16,22 * * *" # 04:17, 10:17, 16:17 and 22:17 UTC
+  workflow_dispatch:
+    inputs:
+      max_days:
+        description: "Most days to index (blank = 1, 0 = no limit)"
+        required: false
+
+# Never run two backfill index runs at once; a new one waits for the running one.
+# Separate from "DataCite index", which works on different days.
+concurrency:
+  group: datacite-backfill-index
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+# Lines the script reports (common.report), posted to Discord by the last step
+env:
+  RUN_REPORT: ${{ github.workspace }}/run-report.txt
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: automation/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r automation/requirements.txt
+
+      # Joins the tailnet as an ephemeral tag:ci device, removed after the job
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Index
+        env:
+          BUNNY_STORAGE_PASSWORD: ${{ secrets.BUNNY_STORAGE_PASSWORD }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MEILISEARCH_API_URL: ${{ secrets.MEILISEARCH_API_URL }}
+          MEILISEARCH_API_KEY: ${{ secrets.MEILISEARCH_API_KEY }}
+          INPUT_MAX_DAYS: ${{ inputs.max_days }}
+        run: |
+          args=(--backfill)
+          [[ -n "$INPUT_MAX_DAYS" ]] && args+=(--max-days "$INPUT_MAX_DAYS")
+
+          python automation/datacite_index.py "${args[@]}"
+
+      # Runs even if an earlier step failed or the run was cancelled
+      - name: Post to Discord
+        if: always()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python3 automation/notify_discord.py "DataCite backfill index" "${{ job.status }}"

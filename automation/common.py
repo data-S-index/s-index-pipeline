@@ -40,9 +40,14 @@ ENV_FILE = AUTOMATION_DIR.parent / ".env"
 # First day the jobs harvest and load when no --date/--start is given
 START_DATE = date(2026, 5, 1)
 
+# Last day --backfill stops at: DataCite has no Dataset records created before
+# February 2011. Backfill runs start the day before START_DATE and work backwards.
+BACKFILL_OLDEST_DATE = date(2011, 1, 1)
+
 # The default range ends this many days before today (UTC). A harvested day is
-# never revisited, so waiting a week lets DataCite records registered late
-# (and today's, which is still in progress) be included.
+# never revisited, so waiting a week lets today's records, still in progress,
+# be complete. Records registered later are picked up on the day they were
+# registered (see datacite_harvest.py).
 END_DELAY_DAYS = 7
 
 # Days each run processes by default. Small runs keep every job short; the
@@ -196,8 +201,14 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
         "--max-days",
         type=int,
         default=DAYS_PER_RUN,
-        help="Most days to process in this run, oldest first "
-        f"(default: {DAYS_PER_RUN}; 0 = no limit).",
+        help="Most days to process in this run, oldest first, or newest first "
+        f"with --backfill (default: {DAYS_PER_RUN}; 0 = no limit).",
+    )
+    parser.add_argument(
+        "--backfill",
+        action="store_true",
+        help="Work backwards from the day before "
+        f"{START_DATE} to {BACKFILL_OLDEST_DATE}, newest first.",
     )
     parser.add_argument(
         "--config",
@@ -212,13 +223,22 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
 
 def resolve_days(args: argparse.Namespace) -> list[date]:
     """
-    Return the days to work on, from --date, --start/--end or the defaults:
-    START_DATE up to END_DELAY_DAYS before today (UTC).
+    Return the days to work on, from --date, --start/--end, --backfill or the
+    defaults: START_DATE up to END_DELAY_DAYS before today (UTC).
+
+    The days are oldest first, except with --backfill: the day before START_DATE
+    back to BACKFILL_OLDEST_DATE, newest first.
 
     Exits with an error if the arguments conflict or the range is empty.
     """
     if args.date and (args.start or args.end):
         sys.exit("Use either --date or --start/--end, not both.")
+
+    if args.backfill:
+        if args.date or args.start or args.end:
+            sys.exit("Use either --backfill or --date/--start/--end, not both.")
+        n_days = (START_DATE - BACKFILL_OLDEST_DATE).days
+        return [START_DATE - timedelta(days=i) for i in range(1, n_days + 1)]
 
     if args.date:
         return [_parse_date_strict(args.date)]

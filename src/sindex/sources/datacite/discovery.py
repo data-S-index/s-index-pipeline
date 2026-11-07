@@ -46,6 +46,7 @@ def stream_datacite_records(
     detail: bool = True,
     updated_after: str | None = None,
     citations_only: bool = False,
+    include_registered: bool = False,
     session: requests.Session | None = None,  # pass a shared session
     timeout: Tuple[int, int] = (10, 240),  # (connect, read) seconds
     on_page: Callable[[int, int | None], None] | None = None,
@@ -78,6 +79,12 @@ def stream_datacite_records(
             citation (citationCount >= 1). Reduces result set significantly but
             note that DataCite's citationCount index may lag slightly behind the
             actual citations relationship block.
+        include_registered: If True, also returns records registered in the date
+            range, whatever their created date. A draft can be registered long
+            after it is created, and only then appears in the API, so a created
+            range that has already been harvested never returns it. Not a
+            replacement for the created range: some records have no registered
+            date. A record can match two different ranges this way.
         session: Shared requests session (recommended) otherwise a new one created.
         timeout: (connect, read) timeout tuple.
             connect = How long to wait while trying to open a TCP connection to the server.
@@ -94,9 +101,11 @@ def stream_datacite_records(
     """
     s = session or make_session()
     base_url = BASE_API_URL
-    query = (
-        f"types.resourceTypeGeneral:Dataset AND created:[{start_date} TO {end_date}]"
-    )
+    date_range = f"[{start_date} TO {end_date}]"
+    date_filter = f"created:{date_range}"
+    if include_registered:
+        date_filter = f"({date_filter} OR registered:{date_range})"
+    query = f"types.resourceTypeGeneral:Dataset AND {date_filter}"
     if updated_after:
         query += f" AND updated:[{updated_after} TO *]"
     if citations_only:

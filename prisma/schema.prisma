@@ -394,7 +394,7 @@ model IngestLog {
     id Int @id @default(autoincrement())
 
     source String // e.g. "datacite"
-    day    DateTime @db.Date // the day the records were created at the source
+    day    DateTime @db.Date // the day the records were created or registered at the source
 
     records  Int // records in the harvested file
     inserted Int // new Dataset rows

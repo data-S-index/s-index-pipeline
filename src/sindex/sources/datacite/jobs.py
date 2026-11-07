@@ -38,6 +38,7 @@ def harvest_datacite_datasets_for_date_range_to_ndjson(
     *,
     updated_after: str | None = None,
     citations_only: bool = False,
+    include_registered: bool = False,
     window_days: int = 7,
     page_size: int = 1000,
     detail: bool = True,
@@ -71,6 +72,8 @@ def harvest_datacite_datasets_for_date_range_to_ndjson(
             (citationCount >= 1). Reduces volume significantly — roughly 75% fewer
             records in practice. Note that DataCite's citationCount index may lag
             slightly behind the actual citations relationship block.
+        include_registered: If True, also harvest records registered in each window,
+            whatever their created date. See `stream_datacite_records`.
         window_days: Window size in days (inclusive). Default 7.
         page_size: DataCite cursor page size (max 1000).
         polite_sleep_seconds: Optional sleep between windows to avoid hammering API.
@@ -163,6 +166,7 @@ def harvest_datacite_datasets_for_date_range_to_ndjson(
                         detail=detail,
                         updated_after=updated_after,
                         citations_only=citations_only,
+                        include_registered=include_registered,
                         session=s,
                         timeout=timeout,
                         on_page=on_page

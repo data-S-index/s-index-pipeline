@@ -1,0 +1,82 @@
+# Loads backfilled DataCite days from the bunny.net storage zone into Postgres
+# (automation/datacite_load.py --backfill), newest first, one day per run. Runs
+# after every "DataCite backfill harvest" run, whether or not it succeeded (a
+# partly failed harvest still has days to load), plus a fallback four times a
+# day. Reaches the database over Tailscale.
+#
+# Secrets:
+#   BUNNY_STORAGE_PASSWORD
+#   DISCORD_WEBHOOK_URL  channel webhook the run's result is posted to
+#   DATABASE_URL         using the database's Tailscale name or IP
+#   TAILSCALE_OAUTH_CLIENT_ID   Tailscale OAuth client with the auth_keys scope,
+#   TAILSCALE_OAUTH_SECRET      allowed to tag devices with tag:ci
+
+name: DataCite backfill load
+
+on:
+  workflow_run:
+    workflows: ["DataCite backfill harvest"]
+    types: [completed]
+  schedule:
+    # Four times a day, between harvests, in case a trigger was missed
+    - cron: "47 2,8,14,20 * * *" # 02:47, 08:47, 14:47 and 20:47 UTC
+  workflow_dispatch:
+    inputs:
+      max_days:
+        description: "Most days to load (blank = 1, 0 = no limit)"
+        required: false
+
+# Never run two backfill loads at once; a new one waits for the running one.
+# Separate from "DataCite load", which works on different days.
+concurrency:
+  group: datacite-backfill-load
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+# Lines the script reports (common.report), posted to Discord by the last step
+env:
+  RUN_REPORT: ${{ github.workspace }}/run-report.txt
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: automation/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r automation/requirements.txt
+
+      # Joins the tailnet as an ephemeral tag:ci device, removed after the job
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Load
+        env:
+          BUNNY_STORAGE_PASSWORD: ${{ secrets.BUNNY_STORAGE_PASSWORD }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          INPUT_MAX_DAYS: ${{ inputs.max_days }}
+        run: |
+          args=(--backfill)
+          [[ -n "$INPUT_MAX_DAYS" ]] && args+=(--max-days "$INPUT_MAX_DAYS")
+
+          python automation/datacite_load.py "${args[@]}"
+
+      # Runs even if an earlier step failed or the run was cancelled
+      - name: Post to Discord
+        if: always()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python3 automation/notify_discord.py "DataCite backfill load" "${{ job.status }}"
