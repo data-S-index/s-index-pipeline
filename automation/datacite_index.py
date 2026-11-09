@@ -7,14 +7,23 @@ that has an "IngestLog" row but no "indexedAt" yet, it:
      checks it against the row's "fileSha256"
   2. Looks up each record's "Dataset" row (by the same identifier
      datacite_load.py inserted it under) with its "DatasetAuthor" rows
-  3. Sends those datasets to Meilisearch, waits for every task to succeed, and
-     sets the day's "indexedAt" and "indexed" in "IngestLog"
+  3. Sends those datasets to Meilisearch and sets the day's "indexedAt" and
+     "indexed" in "IngestLog"
+  4. Waits for the Meilisearch tasks and reports how long they took
+
+Meilisearch queues each batch as a task and indexes it in the background, which
+can take longer than a run, so a day counts as indexed once all its batches are
+accepted. Running out of time or losing contact during the wait is only
+reported. A task that Meilisearch reports as failed or canceled during the wait
+fails the day and clears its "indexedAt", so it is sent again on the next run; a
+task that fails after the wait ended isn't noticed, but can be looked up by the
+task uids in the run's report.
 
 Documents are keyed by "Dataset".id, so sending a dataset again replaces its
-document: a day that fails or is interrupted is simply indexed again on the
-next run. Records skipped by the load because their dataset was already in
-the database are sent too (they replace the document that is already there).
-Records without a "Dataset" row (failed in the load) are counted as missing.
+document: a day that fails or is interrupted while sending is simply indexed
+again on the next run. Records skipped by the load because their dataset was
+already in the database are sent too (they replace the document that is already
+there). Records without a "Dataset" row (failed in the load) are counted as missing.
 
 Days are indexed oldest first, one per run by default (--max-days). A day that
 fails is reported and skipped; the remaining days still run and the script
@@ -59,6 +68,7 @@ from pathlib import Path
 
 import orjson
 import psycopg
+import requests
 from psycopg.rows import dict_row
 
 # pylint: disable=wrong-import-position,wrong-import-order
@@ -97,6 +107,10 @@ MARK_INDEXED_SQL = """
     UPDATE "IngestLog" SET "indexedAt" = %s, indexed = %s
     WHERE source = %s AND day = %s AND "fileSha256" = %s"""
 
+CLEAR_INDEXED_SQL = """
+    UPDATE "IngestLog" SET "indexedAt" = NULL, indexed = NULL
+    WHERE source = %s AND day = %s AND "fileSha256" = %s"""
+
 # Meilisearch task statuses after which a task won't change any more
 TASK_DONE = ("succeeded", "failed", "canceled")
 
@@ -104,6 +118,10 @@ TASK_DONE = ("succeeded", "failed", "canceled")
 # ---------------------------------------------------------------------------
 # Meilisearch
 # ---------------------------------------------------------------------------
+
+
+class TaskFailed(RuntimeError):
+    """Meilisearch reported a task as failed or canceled."""
 
 
 class Meilisearch:
@@ -128,27 +146,28 @@ class Meilisearch:
         resp.raise_for_status()
         return resp.json()["taskUid"]
 
-    def wait_for_task(self, uid: int, timeout: float) -> None:
+    def wait_for_task(self, uid: int, deadline: float) -> bool:
         """
-        Wait until the task is done.
+        Wait until the task is done or time.monotonic() passes `deadline`.
+
+        Returns:
+            True if the task succeeded, False if it's still not done.
 
         Raises:
-            RuntimeError: If it fails, is canceled, or isn't done in `timeout`
-                seconds.
+            TaskFailed: If the task failed or was canceled.
         """
-        deadline = time.monotonic() + timeout
         while True:
             resp = self.session.get(f"{self.url}/tasks/{uid}", timeout=30)
             resp.raise_for_status()
             task = resp.json()
             if task["status"] == "succeeded":
-                return
+                return True
             if task["status"] in TASK_DONE:
-                raise RuntimeError(
+                raise TaskFailed(
                     f"Meilisearch task {uid} {task['status']}: {task.get('error')}"
                 )
             if time.monotonic() > deadline:
-                raise RuntimeError(f"Meilisearch task {uid} not done after {timeout}s")
+                return False
             time.sleep(2)
 
 
@@ -215,6 +234,19 @@ def ingest_rows(conn: psycopg.Connection, days: list[date]) -> dict[date, dict]:
         return {row["day"]: row for row in cur}
 
 
+def wait_for_tasks(
+    search: Meilisearch, tasks: list[int], deadline: float, day_iso: str
+) -> int:
+    """Wait for `tasks` in order until `deadline`. Returns how many are done."""
+    print(f"[{day_iso}] Waiting for {len(tasks)} Meilisearch task(s)", flush=True)
+    waiting = common.ProgressLog(f"[{day_iso}] Tasks done", every_seconds=10)
+    for n, uid in enumerate(tasks, start=1):
+        if not search.wait_for_task(uid, deadline):
+            return n - 1
+        waiting(n, len(tasks), final=n == len(tasks))
+    return len(tasks)
+
+
 def index_day(  # pylint: disable=too-many-arguments,too-many-locals
     row: dict,
     conn: psycopg.Connection,
@@ -222,8 +254,12 @@ def index_day(  # pylint: disable=too-many-arguments,too-many-locals
     search: Meilisearch,
     cfg: dict,
     work_dir: Path,
+    wait_deadline: float,
 ) -> None:
-    """Send a loaded day's datasets to Meilisearch and mark it indexed."""
+    """
+    Send a loaded day's datasets to Meilisearch, mark it indexed, and wait for
+    its tasks until time.monotonic() passes `wait_deadline`.
+    """
     day_iso = row["day"].isoformat()
     local_file = work_dir / f"{SOURCE}-{day_iso}.ndjson.gz"
 
@@ -271,22 +307,44 @@ def index_day(  # pylint: disable=too-many-arguments,too-many-locals
     finally:
         local_file.unlink(missing_ok=True)
 
-    print(f"[{day_iso}] Waiting for {len(tasks)} Meilisearch task(s)", flush=True)
-    waiting = common.ProgressLog(f"[{day_iso}] Tasks done", every_seconds=10)
-    for n, uid in enumerate(tasks, start=1):
-        search.wait_for_task(uid, cfg["task_timeout_seconds"])
-        waiting(n, len(tasks), final=n == len(tasks))
-
-    # Only if the day wasn't loaded again (--force) in the meantime
-    conn.execute(
-        MARK_INDEXED_SQL,
-        (datetime.now(timezone.utc), indexed, SOURCE, row["day"], row["fileSha256"]),
-    )
+    # Marked before the wait, so a run that ends during it can't undo the day.
+    # Only if the day wasn't loaded again (--force) in the meantime.
+    day_key = (SOURCE, row["day"], row["fileSha256"])
+    conn.execute(MARK_INDEXED_SQL, (datetime.now(timezone.utc), indexed, *day_key))
+    task_range = f"{tasks[0]}-{tasks[-1]}" if tasks else "none"
     common.report(
-        f"[{day_iso}] Indexed: {indexed:,} | "
+        f"[{day_iso}] Sent: {indexed:,} | "
         f"Missing: {counts['records'] - counts['failed'] - indexed:,} | "
+        f"Tasks: {task_range} | "
         f"Took: {time.monotonic() - t0:,.0f}s"
     )
+    if not tasks:
+        return
+
+    t_wait = time.monotonic()
+    try:
+        done = wait_for_tasks(search, tasks, wait_deadline, day_iso)
+    except TaskFailed:
+        conn.execute(CLEAR_INDEXED_SQL, day_key)
+        raise
+    except requests.RequestException as e:
+        common.report(
+            f"[{day_iso}] Stopped waiting, couldn't check the tasks ({e!r}); "
+            f"Meilisearch continues in the background."
+        )
+        return
+
+    waited = time.monotonic() - t_wait
+    if done == len(tasks):
+        common.report(
+            f"[{day_iso}] All {done:,} task(s) done | "
+            f"Waited: {waited:,.0f}s | Total: {time.monotonic() - t0:,.0f}s"
+        )
+    else:
+        common.report(
+            f"[{day_iso}] Stopped waiting after {waited:,.0f}s with {done:,} of "
+            f"{len(tasks):,} task(s) done; Meilisearch continues in the background."
+        )
 
 
 def print_status(days: list[date], rows: dict) -> None:
@@ -335,6 +393,7 @@ def main() -> None:
     args = parse_args()
     cfg = common.load_config(args.config)
     icfg = cfg["datacite_index"]
+    wait_deadline = time.monotonic() + icfg["task_wait_seconds"]
     days = common.resolve_days(args)
 
     if not args.status and maintenance_mode(cfg["datacite_load"]["maintenance_url"]):
@@ -380,7 +439,15 @@ def main() -> None:
                     todo = todo[: todo.index(day)]
                     break
                 try:
-                    index_day(rows[day], conn, storage, search, icfg, Path(work_dir))
+                    index_day(
+                        rows[day],
+                        conn,
+                        storage,
+                        search,
+                        icfg,
+                        Path(work_dir),
+                        wait_deadline,
+                    )
                 except Exception as e:  # pylint: disable=broad-exception-caught
                     common.report(f"[{day.isoformat()}] Failed: {e!r}")
                     traceback.print_exc()
