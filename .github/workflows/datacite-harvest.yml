@@ -10,9 +10,9 @@ name: DataCite harvest
 
 on:
   schedule:
-    # Four times a day, one day per run: a backlog shrinks by three days a day,
+    # Every hour on the hour, one day per run: a backlog shrinks by 23 days a day,
     # and once caught up, one run a day harvests and the others have nothing to do
-    - cron: "17 3,9,15,21 * * *" # 03:17, 09:17, 15:17 and 21:17 UTC
+    - cron: "0 * * * *" # hh:00 UTC
   workflow_dispatch:
     inputs:
       date:
