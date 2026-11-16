@@ -11,13 +11,16 @@ that has an "IngestLog" row but no "indexedAt" yet, it:
      "indexed" in "IngestLog"
   4. Waits for the Meilisearch tasks and reports how long they took
 
-Meilisearch queues each batch as a task and indexes it in the background, which
-can take longer than a run, so a day counts as indexed once all its batches are
-accepted. Running out of time or losing contact during the wait is only
-reported. A task that Meilisearch reports as failed or canceled during the wait
-fails the day and clears its "indexedAt", so it is sent again on the next run; a
-task that fails after the wait ended isn't noticed, but can be looked up by the
-task uids in the run's report.
+Meilisearch queues each batch as a task and indexes it in the background. The
+next day is only sent once all of the previous day's tasks are done, so the
+server never has more than one day queued. A day counts as indexed once all its
+batches are accepted: running out of time (task_wait_seconds) or losing contact
+during the wait doesn't fail the day, but the run stops there instead of moving
+on, and the remaining days are left for the next run. A task that Meilisearch
+reports as failed or canceled during the wait fails the day and clears its
+"indexedAt", so it is sent again on the next run; a task that fails after the
+wait ended isn't noticed, but can be looked up by the task uids in the run's
+report.
 
 Documents are keyed by "Dataset".id, so sending a dataset again replaces its
 document: a day that fails or is interrupted while sending is simply indexed
@@ -255,10 +258,14 @@ def index_day(  # pylint: disable=too-many-arguments,too-many-locals
     cfg: dict,
     work_dir: Path,
     wait_deadline: float,
-) -> None:
+) -> bool:
     """
     Send a loaded day's datasets to Meilisearch, mark it indexed, and wait for
     its tasks until time.monotonic() passes `wait_deadline`.
+
+    Returns:
+        True if all of the day's tasks are done, False if the wait ended first
+        (the day stays marked indexed, but no further day should be sent).
     """
     day_iso = row["day"].isoformat()
     local_file = work_dir / f"{SOURCE}-{day_iso}.ndjson.gz"
@@ -319,7 +326,7 @@ def index_day(  # pylint: disable=too-many-arguments,too-many-locals
         f"Took: {time.monotonic() - t0:,.0f}s"
     )
     if not tasks:
-        return
+        return True
 
     t_wait = time.monotonic()
     try:
@@ -332,7 +339,7 @@ def index_day(  # pylint: disable=too-many-arguments,too-many-locals
             f"[{day_iso}] Stopped waiting, couldn't check the tasks ({e!r}); "
             f"Meilisearch continues in the background."
         )
-        return
+        return False
 
     waited = time.monotonic() - t_wait
     if done == len(tasks):
@@ -340,11 +347,12 @@ def index_day(  # pylint: disable=too-many-arguments,too-many-locals
             f"[{day_iso}] All {done:,} task(s) done | "
             f"Waited: {waited:,.0f}s | Total: {time.monotonic() - t0:,.0f}s"
         )
-    else:
-        common.report(
-            f"[{day_iso}] Stopped waiting after {waited:,.0f}s with {done:,} of "
-            f"{len(tasks):,} task(s) done; Meilisearch continues in the background."
-        )
+        return True
+    common.report(
+        f"[{day_iso}] Stopped waiting after {waited:,.0f}s with {done:,} of "
+        f"{len(tasks):,} task(s) done; Meilisearch continues in the background."
+    )
+    return False
 
 
 def print_status(days: list[date], rows: dict) -> None:
@@ -438,8 +446,15 @@ def main() -> None:
                     )
                     todo = todo[: todo.index(day)]
                     break
+                if time.monotonic() > wait_deadline:
+                    common.report(
+                        f"Out of time to wait for Meilisearch; stopping before "
+                        f"{day.isoformat()}."
+                    )
+                    todo = todo[: todo.index(day)]
+                    break
                 try:
-                    index_day(
+                    finished = index_day(
                         rows[day],
                         conn,
                         storage,
@@ -452,6 +467,17 @@ def main() -> None:
                     common.report(f"[{day.isoformat()}] Failed: {e!r}")
                     traceback.print_exc()
                     failed.append(day)
+                    continue
+                if not finished:
+                    # Don't queue another day on top of unfinished tasks
+                    rest = todo[todo.index(day) + 1 :]
+                    if rest:
+                        common.report(
+                            f"[{day.isoformat()}] Tasks not done; leaving "
+                            f"{len(rest)} day(s) for the next run."
+                        )
+                    todo = todo[: todo.index(day) + 1]
+                    break
 
     if todo:
         common.report(f"Done. Indexed {len(todo) - len(failed)} of {len(todo)} day(s).")
