@@ -20,8 +20,8 @@ on:
     workflows: ["DataCite backfill load"]
     types: [completed]
   schedule:
-    # Four times a day, after each load fallback, in case a trigger was missed
-    - cron: "17 4,10,16,22 * * *" # 04:17, 10:17, 16:17 and 22:17 UTC
+    # Once a day, after the backfill load fallback, in case a trigger was missed
+    - cron: "17 16 * * *" # 16:17 UTC
   workflow_dispatch:
     inputs:
       max_days:

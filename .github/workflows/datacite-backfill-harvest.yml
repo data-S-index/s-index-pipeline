@@ -12,8 +12,8 @@ name: DataCite backfill harvest
 
 on:
   schedule:
-    # Four times a day, every pending day per run, between the "DataCite harvest" runs
-    - cron: "37 0,6,12,18 * * *" # 00:37, 06:37, 12:37 and 18:37 UTC
+    # Once a day, every pending day per run, away from the "DataCite harvest" run
+    - cron: "37 12 * * *" # 12:37 UTC
   workflow_dispatch:
     inputs:
       max_days:

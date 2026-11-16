@@ -18,8 +18,8 @@ on:
     workflows: ["DataCite harvest"]
     types: [completed]
   schedule:
-    # Every hour, 20 minutes after each harvest, in case a trigger was missed
-    - cron: "20 * * * *" # hh:20 UTC
+    # Once a day, after the harvest, in case a trigger was missed
+    - cron: "47 5 * * *" # 05:47 UTC
   workflow_dispatch:
     inputs:
       date:

@@ -10,9 +10,8 @@ name: DataCite harvest
 
 on:
   schedule:
-    # Every hour, one day per run: a backlog shrinks by 23 days a day,
-    # and once caught up, one run a day harvests and the others have nothing to do
-    - cron: "7 * * * *" # hh:07 UTC (off the top of the hour, when GitHub drops the most scheduled runs)
+    # Once a day, one day per run (backlog is being caught up with manual runs)
+    - cron: "17 3 * * *" # 03:17 UTC
   workflow_dispatch:
     inputs:
       date:
