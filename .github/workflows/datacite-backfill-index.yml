@@ -1,5 +1,5 @@
 # Adds backfilled DataCite days from Postgres to the Meilisearch "dataset" index
-# (automation/datacite_index.py --backfill), newest first, one day per run. Runs
+# (automation/datacite_index.py --backfill), newest first, every pending day per run. Runs
 # after every "DataCite backfill load" run, whether or not it succeeded (a
 # partly failed load still has days to index), plus a fallback four times a day.
 # Reaches the database over Tailscale.
@@ -25,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       max_days:
-        description: "Most days to index (blank = 1, 0 = no limit)"
+        description: "Most days to index (blank or 0 = no limit)"
         required: false
 
 # Never run two backfill index runs at once; a new one waits for the running one.
@@ -74,7 +74,7 @@ jobs:
           INPUT_MAX_DAYS: ${{ inputs.max_days }}
         run: |
           args=(--backfill)
-          [[ -n "$INPUT_MAX_DAYS" ]] && args+=(--max-days "$INPUT_MAX_DAYS")
+          args+=(--max-days "${INPUT_MAX_DAYS:-0}")
 
           python automation/datacite_index.py "${args[@]}"
 

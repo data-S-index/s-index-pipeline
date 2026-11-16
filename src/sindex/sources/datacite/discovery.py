@@ -1,3 +1,4 @@
+import time
 from typing import Callable, Dict, Iterator, Tuple
 
 import requests
@@ -50,6 +51,8 @@ def stream_datacite_records(
     session: requests.Session | None = None,  # pass a shared session
     timeout: Tuple[int, int] = (10, 240),  # (connect, read) seconds
     on_page: Callable[[int, int | None], None] | None = None,
+    page_retries: int = 5,
+    page_backoff: float = 5.0,
 ) -> Iterator[Dict]:
     """
     Stream raw DataCite Dataset records created within a date range, optionally
@@ -93,6 +96,12 @@ def stream_datacite_records(
         on_page: Optional callback called after each page is fetched with
             (records fetched so far, total matching records reported by the API
             or None). Useful for showing progress.
+        page_retries: How many times to retry a page that comes back as a bad
+            body (empty or non-JSON 2xx, cut-off chunked response, read
+            timeout). The session's own retries only cover connection errors
+            and 429/5xx, not these. The same cursor URL is requested again, so
+            no records are skipped or repeated.
+        page_backoff: Base wait in seconds between page retries (doubles each try).
 
     Yields:
         dict:
@@ -119,9 +128,9 @@ def stream_datacite_records(
     fetched = 0
 
     while True:
-        r = s.get(base_url, params=params, timeout=timeout)
-        r.raise_for_status()
-        payload = r.json()
+        payload = _fetch_page(
+            s, base_url, params, timeout, retries=page_retries, backoff=page_backoff
+        )
         page = payload.get("data", [])
 
         if on_page:
@@ -137,6 +146,49 @@ def stream_datacite_records(
 
         base_url = next_url
         params = {}
+
+
+def _fetch_page(
+    s: requests.Session,
+    url: str,
+    params: dict,
+    timeout: Tuple[int, int],
+    *,
+    retries: int,
+    backoff: float,
+) -> dict:
+    """
+    GET one DataCite page and decode its JSON, retrying bad bodies.
+
+    HTTP errors that are left after the session's own retries (e.g. 4xx) are
+    raised at once.
+    """
+    for attempt in range(retries + 1):
+        try:
+            r = s.get(url, params=params, timeout=timeout)
+            r.raise_for_status()
+            payload = r.json()
+            if not isinstance(payload, dict):
+                raise ValueError(f"Unexpected payload type: {type(payload).__name__}")
+            return payload
+        except requests.HTTPError:
+            raise
+        except (
+            ValueError,  # includes requests.JSONDecodeError
+            requests.exceptions.ChunkedEncodingError,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+        ) as e:
+            if attempt >= retries:
+                raise
+            wait = backoff * (2**attempt)
+            print(
+                f"  DataCite page fetch failed ({type(e).__name__}: {e}); "
+                f"retry {attempt + 1}/{retries} in {wait:.0f}s",
+                flush=True,
+            )
+            time.sleep(wait)
+    raise AssertionError("unreachable")
 
 
 def fetch_datacite_pubdate(doi: str, session: requests.Session | None = None) -> str:

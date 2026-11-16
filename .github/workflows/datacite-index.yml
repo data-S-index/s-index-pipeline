@@ -1,5 +1,5 @@
 # Adds loaded DataCite days from Postgres to the Meilisearch "dataset" index
-# (automation/datacite_index.py), one day per run. Runs after every
+# (automation/datacite_index.py), every pending day per run. Runs after every
 # "DataCite load" run, whether or not it succeeded (a partly failed load still
 # has days to index), plus an hourly fallback.
 # Reaches the database over Tailscale.
@@ -34,7 +34,7 @@ on:
         description: "Last day of a range, inclusive (YYYY-MM-DD)"
         required: false
       max_days:
-        description: "Most days to index (blank = 1, 0 = no limit)"
+        description: "Most days to index (blank or 0 = no limit)"
         required: false
       force:
         description: "Index days again that are already indexed"
@@ -93,7 +93,7 @@ jobs:
           [[ -n "$INPUT_DATE" ]] && args+=(--date "$INPUT_DATE")
           [[ -n "$INPUT_START" ]] && args+=(--start "$INPUT_START")
           [[ -n "$INPUT_END" ]] && args+=(--end "$INPUT_END")
-          [[ -n "$INPUT_MAX_DAYS" ]] && args+=(--max-days "$INPUT_MAX_DAYS")
+          args+=(--max-days "${INPUT_MAX_DAYS:-0}")
           [[ "$INPUT_FORCE" == "true" ]] && args+=(--force)
 
           python automation/datacite_index.py "${args[@]}"

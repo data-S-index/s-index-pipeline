@@ -12,12 +12,12 @@ name: DataCite backfill harvest
 
 on:
   schedule:
-    # Four times a day, one day per run, between the "DataCite harvest" runs
+    # Four times a day, every pending day per run, between the "DataCite harvest" runs
     - cron: "37 0,6,12,18 * * *" # 00:37, 06:37, 12:37 and 18:37 UTC
   workflow_dispatch:
     inputs:
       max_days:
-        description: "Most days to harvest (blank = 1, 0 = no limit)"
+        description: "Most days to harvest (blank or 0 = no limit)"
         required: false
 
 # Never run two backfill harvests at once; a new one waits for the running one.
@@ -55,7 +55,7 @@ jobs:
           INPUT_MAX_DAYS: ${{ inputs.max_days }}
         run: |
           args=(--backfill)
-          [[ -n "$INPUT_MAX_DAYS" ]] && args+=(--max-days "$INPUT_MAX_DAYS")
+          args+=(--max-days "${INPUT_MAX_DAYS:-0}")
 
           python automation/datacite_harvest.py "${args[@]}"
 

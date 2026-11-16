@@ -1,5 +1,5 @@
 # Loads backfilled DataCite days from the bunny.net storage zone into Postgres
-# (automation/datacite_load.py --backfill), newest first, one day per run. Runs
+# (automation/datacite_load.py --backfill), newest first, every pending day per run. Runs
 # after every "DataCite backfill harvest" run, whether or not it succeeded (a
 # partly failed harvest still has days to load), plus a fallback four times a
 # day. Reaches the database over Tailscale.
@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       max_days:
-        description: "Most days to load (blank = 1, 0 = no limit)"
+        description: "Most days to load (blank or 0 = no limit)"
         required: false
 
 # Never run two backfill loads at once; a new one waits for the running one.
@@ -70,7 +70,7 @@ jobs:
           INPUT_MAX_DAYS: ${{ inputs.max_days }}
         run: |
           args=(--backfill)
-          [[ -n "$INPUT_MAX_DAYS" ]] && args+=(--max-days "$INPUT_MAX_DAYS")
+          args+=(--max-days "${INPUT_MAX_DAYS:-0}")
 
           python automation/datacite_load.py "${args[@]}"
 
