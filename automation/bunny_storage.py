@@ -10,7 +10,9 @@ Files are addressed by their path inside the zone, e.g.
 from __future__ import annotations
 
 import hashlib
+import io
 from pathlib import Path
+from typing import BinaryIO
 
 from sindex.core.http import make_session
 
@@ -49,9 +51,33 @@ class BunnyStorage:
             {"path": path, "bytes": size, "sha256": hex digest}
         """
         sha256 = hashlib.sha256(data).hexdigest()
+        self._put(path, io.BytesIO(data), sha256)
+        return {"path": path, "bytes": len(data), "sha256": sha256}
+
+    def upload_file(self, local_path: Path, path: str) -> dict:
+        """
+        Upload a local file to `path`, streaming it from disk.
+
+        Returns the same dict as put_bytes.
+        """
+        local_path = Path(local_path)
+        digest = hashlib.sha256()
+        with open(local_path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                digest.update(chunk)
+        sha256 = digest.hexdigest()
+        with open(local_path, "rb") as f:
+            self._put(path, f, sha256)
+        return {"path": path, "bytes": local_path.stat().st_size, "sha256": sha256}
+
+    def _put(self, path: str, body: BinaryIO, sha256: str) -> None:
+        # Always pass a file-like body, never raw bytes: urllib3 sends a bytes
+        # body as one SSL write, so the socket timeout would cap the *whole*
+        # upload. A file object is sent in small blocks, each with its own
+        # timeout, and urllib3 rewinds it before a retry.
         resp = self.session.put(
             self._url(path),
-            data=data,
+            data=body,
             headers={
                 "Content-Type": "application/octet-stream",
                 "Checksum": sha256.upper(),
@@ -59,11 +85,6 @@ class BunnyStorage:
             timeout=TIMEOUT,
         )
         resp.raise_for_status()
-        return {"path": path, "bytes": len(data), "sha256": sha256}
-
-    def upload_file(self, local_path: Path, path: str) -> dict:
-        """Upload a local file to `path`. Returns the same dict as put_bytes."""
-        return self.put_bytes(path, Path(local_path).read_bytes())
 
     def get_bytes(self, path: str) -> bytes | None:
         """Return the contents of the file at `path`, or None if it doesn't exist."""
