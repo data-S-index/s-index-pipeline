@@ -410,8 +410,22 @@ model IngestLog {
     indexedAt DateTime? // when the day's datasets were added to Meilisearch
     indexed   Int? // documents sent to Meilisearch
 
+    updatesCheckedAt DateTime? // when datacite_update.py last checked the day for metadata changes
+    updatesFound     Int? // records of the day's files DataCite returned as updated
+    updatesApplied   Int? // datasets changed in the database by that check
+
     created DateTime @default(now())
     updated DateTime @updatedAt
 
     @@unique([source, day])
+}
+
+// Precomputed platform metrics shown on /metrics, one row per metric key.
+// Refreshed daily by scripts/schedule/update-platform-metrics.ts
+model PlatformMetric {
+    key   String @id // e.g. "datasetsByYear", "publishers", "counts"
+    value Json
+
+    created DateTime @default(now())
+    updated DateTime @updatedAt
 }

@@ -1,0 +1,105 @@
+# Checks loaded DataCite days for metadata changes at DataCite
+# (automation/datacite_update.py): replaces the changed records in the day's
+# files in the bunny.net storage zone, updates their Dataset rows in Postgres
+# and sends them to Meilisearch. Each run works through the least recently
+# checked days until run_seconds (config.yaml). Reaches the database over
+# Tailscale.
+#
+# Secrets:
+#   BUNNY_STORAGE_PASSWORD
+#   DISCORD_WEBHOOK_URL  channel webhook the run's result is posted to
+#   DATABASE_URL         using the database's Tailscale name or IP
+#   MEILISEARCH_API_URL  Meilisearch URL and a key that can add documents
+#   MEILISEARCH_API_KEY
+#   TAILSCALE_OAUTH_CLIENT_ID   Tailscale OAuth client with the auth_keys scope,
+#   TAILSCALE_OAUTH_SECRET      allowed to tag devices with tag:ci
+
+name: DataCite update
+
+on:
+  schedule:
+    # Twice a day, away from the harvest/load/index runs
+    - cron: "37 0 * * *" # 00:37 UTC
+    - cron: "37 12 * * *" # 12:37 UTC
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Single day to check (YYYY-MM-DD), even if not due"
+        required: false
+      start:
+        description: "First day of a range (YYYY-MM-DD)"
+        required: false
+      end:
+        description: "Last day of a range, inclusive (YYYY-MM-DD)"
+        required: false
+      max_days:
+        description: "Most days to check (blank or 0 = until run_seconds)"
+        required: false
+      dry_run:
+        description: "Only report what would change"
+        type: boolean
+        default: false
+
+# Never run two update runs at once; a new one waits for the running one
+concurrency:
+  group: datacite-update
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+# Lines the script reports (common.report), posted to Discord by the last step
+env:
+  RUN_REPORT: ${{ github.workspace }}/run-report.txt
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: automation/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r automation/requirements.txt
+
+      # Joins the tailnet as an ephemeral tag:ci device, removed after the job
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Update
+        env:
+          BUNNY_STORAGE_PASSWORD: ${{ secrets.BUNNY_STORAGE_PASSWORD }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MEILISEARCH_API_URL: ${{ secrets.MEILISEARCH_API_URL }}
+          MEILISEARCH_API_KEY: ${{ secrets.MEILISEARCH_API_KEY }}
+          INPUT_DATE: ${{ inputs.date }}
+          INPUT_START: ${{ inputs.start }}
+          INPUT_END: ${{ inputs.end }}
+          INPUT_MAX_DAYS: ${{ inputs.max_days }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          args=()
+          [[ -n "$INPUT_DATE" ]] && args+=(--date "$INPUT_DATE")
+          [[ -n "$INPUT_START" ]] && args+=(--start "$INPUT_START")
+          [[ -n "$INPUT_END" ]] && args+=(--end "$INPUT_END")
+          [[ -n "$INPUT_MAX_DAYS" ]] && args+=(--max-days "$INPUT_MAX_DAYS")
+          [[ "$INPUT_DRY_RUN" == "true" ]] && args+=(--dry-run)
+
+          python automation/datacite_update.py "${args[@]}"
+
+      # Runs even if an earlier step failed or the run was cancelled
+      - name: Post to Discord
+        if: always()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python3 automation/notify_discord.py "DataCite update" "${{ job.status }}"

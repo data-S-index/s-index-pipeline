@@ -3,9 +3,10 @@
 # Secrets are read from the repo's .env file or the environment:
 #   BUNNY_STORAGE_PASSWORD  password of the storage zone below
 #                           (bunny.net dashboard > Storage > zone > FTP & API Access)
-#   DATABASE_URL            Postgres connection string (datacite_load.py and
-#                           datacite_index.py)
-#   MEILISEARCH_API_URL     Meilisearch URL and API key (datacite_index.py only)
+#   DATABASE_URL            Postgres connection string (datacite_load.py,
+#                           datacite_index.py and datacite_update.py)
+#   MEILISEARCH_API_URL     Meilisearch URL and API key (datacite_index.py and
+#                           datacite_update.py)
 #   MEILISEARCH_API_KEY
 
 # bunny.net storage zone holding the harvested files
@@ -46,3 +47,20 @@ datacite_index:
   # day's tasks must be done before the next day is sent. Keep it under the
   # workflows' timeout-minutes (350), so a run ends by itself instead of being killed.
   task_wait_seconds: 19800
+
+# datacite_update.py: DataCite metadata changes -> storage zone, Postgres and
+# Meilisearch (the DataCite page size comes from datacite_harvest)
+datacite_update:
+  # A day is checked again this many days after its last check (or harvest)
+  recheck_after_days: 7
+
+  # Records updated and sent to Meilisearch per batch
+  batch_size: 500
+
+  # Seconds to wait for a day's Meilisearch tasks before giving up on the day
+  # (it is rolled back and checked again on the next run)
+  task_wait_seconds: 1800
+
+  # Seconds from the start of a run after which no new day is started. Keep it
+  # under the workflow's timeout-minutes (350) minus one slow day.
+  run_seconds: 18000

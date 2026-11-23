@@ -76,16 +76,17 @@ The **`automation/`** directory contains plain Python scripts for incremental jo
 
 Secrets are read from `.env` or the environment (see [`.env.example`](.env.example)):
 
-| Variable                 | Used by                     | Description                                                            |
-| :----------------------- | :-------------------------- | :--------------------------------------------------------------------- |
-| `BUNNY_STORAGE_PASSWORD` | both scripts                | Storage zone password (zone → FTP & API Access in bunny.net)           |
-| `DATABASE_URL`           | `datacite_load.py`          | Postgres connection string                                             |
+| Variable                 | Used by            | Description                                                  |
+| :----------------------- | :----------------- | :----------------------------------------------------------- |
+| `BUNNY_STORAGE_PASSWORD` | both scripts       | Storage zone password (zone → FTP & API Access in bunny.net) |
+| `DATABASE_URL`           | `datacite_load.py` | Postgres connection string                                   |
 
 The DataCite automation is split into two jobs that only meet in the storage zone:
 
 ```text
 datacite_harvest.py:  DataCite ──► raw + slim files ──► storage zone (+ day manifest)
 datacite_load.py:     storage zone ──► Postgres (+ IngestLog row, same transaction)
+datacite_update.py:   DataCite changes ──► storage zone files, Postgres, Meilisearch
 ```
 
 #### DataCite harvest (`datacite_harvest.py`)
@@ -138,22 +139,50 @@ Both scripts work on the days from `START_DATE` (hardcoded in [`common.py`](auto
 
 The harvest selects a day's records by DataCite's `created` **or** `registered` date, because a draft can be registered long after it was created and only appears in the API from then on. Some records have no `registered` date, so `created` is still needed. A record can therefore be harvested on two days; the load skips it the second time.
 
+#### DataCite update (`datacite_update.py`)
+
+Keeps already-loaded days in step with metadata changes at DataCite. For each day in `IngestLog`, least recently checked first, it asks DataCite for the day's records whose `updated` date is on or after the day's last check (`updatesCheckedAt`), or its `harvestedAt` if it was never checked. Only DOIs already in the day's files count; DOIs aren't added or removed. For those records it:
+
+- replaces them in the day's raw and slim files and uploads both over the old ones, then the manifest with the new checksums and an `updates` section, so the storage zone stays a reference of the current metadata
+- updates the `Dataset` row (title, description, version, publisher, dates, subjects) and replaces the `DatasetAuthor` rows, only where the values differ
+- sends the changed datasets to Meilisearch and waits for the tasks
+- sets `updatesCheckedAt`, `updatesFound`, `updatesApplied` and the new `fileSha256` in `IngestLog`
+
+The database changes are committed with the `IngestLog` row only after the uploads and the Meilisearch tasks succeed. If anything fails, the day is rolled back and checked again from the same date next time. A day is due again `recheck_after_days` (7) after its last check, and a run stops starting new days after `run_seconds`.
+
+```bash
+# Check every due day until run_seconds
+python automation/datacite_update.py
+
+# Check a day now and only report what would change
+python automation/datacite_update.py --date 2024-03-01 --dry-run
+
+# Show how many days are checked and due
+python automation/datacite_update.py --status
+```
+
 #### Configuration (`config.yaml`)
 
-| Section            | Key             | Description                                    |
-| :----------------- | :-------------- | :--------------------------------------------- |
-| `storage`          | `zone`          | bunny.net storage zone name                    |
-| `storage`          | `host`          | Storage API endpoint of the zone's main region |
-| `datacite_harvest` | `page_size`     | DataCite API page size (max 1000)              |
-| `datacite_harvest` | `sleep_seconds` | Pause between days                             |
-| `datacite_load`    | `batch_size`    | Records inserted per batch                     |
+| Section            | Key                  | Description                                    |
+| :----------------- | :------------------- | :--------------------------------------------- |
+| `storage`          | `zone`               | bunny.net storage zone name                    |
+| `storage`          | `host`               | Storage API endpoint of the zone's main region |
+| `datacite_harvest` | `page_size`          | DataCite API page size (max 1000)              |
+| `datacite_harvest` | `sleep_seconds`      | Pause between days                             |
+| `datacite_load`    | `batch_size`         | Records inserted per batch                     |
+| `datacite_update`  | `recheck_after_days` | Days before a checked day is due again         |
+| `datacite_update`  | `batch_size`         | Records updated and indexed per batch          |
+| `datacite_update`  | `task_wait_seconds`  | Wait for a day's Meilisearch tasks             |
+| `datacite_update`  | `run_seconds`        | Time after which a run starts no new days      |
 
 #### GitHub Actions
 
 - [`datacite-harvest.yml`](.github/workflows/datacite-harvest.yml) runs the harvest twice a day (03:17 and 15:17 UTC), one day per run, so a backlog shrinks by one day a day; to catch up faster, run it once with `--max-days 0`. Needs the `BUNNY_STORAGE_PASSWORD` secret.
 - [`datacite-load.yml`](.github/workflows/datacite-load.yml) runs the load (one day per run) after every harvest run, plus daily at 09:47 UTC as a fallback. It reaches the database over Tailscale as an ephemeral `tag:ci` device. Needs the `BUNNY_STORAGE_PASSWORD`, `DATABASE_URL` (using the database's Tailscale address), `TAILSCALE_OAUTH_CLIENT_ID` and `TAILSCALE_OAUTH_SECRET` secrets.
 
-Both can be started by hand from the Actions tab with a date, range, day limit or `force`. Scheduled and `workflow_run` triggers only fire for workflows on the default branch.
+- [`datacite-update.yml`](.github/workflows/datacite-update.yml) runs the update twice a day (00:37 and 12:37 UTC). It needs the load's secrets plus `MEILISEARCH_API_URL` and `MEILISEARCH_API_KEY`. By hand, it takes a date, range, day limit or `dry_run`.
+
+The harvest and load can be started by hand from the Actions tab with a date, range, day limit or `force`. Scheduled and `workflow_run` triggers only fire for workflows on the default branch.
 
 ## 🔌 Sources Used
 

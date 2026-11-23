@@ -195,6 +195,16 @@ def dataset_params(record: dict, identifier: tuple[str, str], now: datetime) -> 
     )
 
 
+def author_values(author: dict) -> tuple:
+    """Return a slim creator's ("nameType", name, "nameIdentifiers", affiliations)."""
+    return (
+        author.get("name_type", ""),
+        clean(author.get("name", "")),
+        [clean(x) for x in author.get("identifiers") or []],
+        [clean(a) for a in author.get("affiliations") or []],
+    )
+
+
 def insert_batch(
     cur: psycopg.Cursor, records: list[dict], now: datetime
 ) -> tuple[int, int]:
@@ -230,18 +240,10 @@ def insert_batch(
             continue
         inserted += 1
         dataset_id = row[0]
-        for author in record.get("creators") or []:
-            authors.append(
-                (
-                    dataset_id,
-                    author.get("name_type", ""),
-                    clean(author.get("name", "")),
-                    [clean(x) for x in author.get("identifiers") or []],
-                    [clean(a) for a in author.get("affiliations") or []],
-                    now,
-                    now,
-                )
-            )
+        authors.extend(
+            (dataset_id, *author_values(author), now, now)
+            for author in record.get("creators") or []
+        )
         identifiers.extend(
             (dataset_id, value, id_type, now, now) for value, id_type in ids
         )
