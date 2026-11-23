@@ -5,7 +5,7 @@ bunny.net storage zone.
 First half of the DataCite automation; datacite_load.py then loads the stored
 files into Postgres. For each day it:
   1. Harvests the raw DataCite Dataset records created or registered on that
-     day (only created with --backfill, see below)
+     day (see below)
   2. Slims each record with `slim_datacite_record`
   3. Uploads both, gzipped, to the storage zone:
        datacite/raw/YYYY/datacite-YYYY-MM-DD.ndjson.gz
@@ -26,8 +26,7 @@ Records appear in the API when they are registered, which can be long after
 they are created, so a day is harvested by both dates: a late record is picked
 up on the day it was registered. Some records have no registered date, so
 created is still needed, and a record can be harvested on two days (the load
-skips it the second time). --backfill reads older records as they are now, so
-created alone finds them.
+skips it the second time).
 
 Settings come from automation/config.yaml (`storage` and `datacite_harvest`
 sections). BUNNY_STORAGE_PASSWORD is read from the repo's .env file or the
@@ -44,9 +43,6 @@ Usage:
     # Harvest one specific day / a range, one day at a time (inclusive)
     python automation/datacite_harvest.py --date 2026-05-01
     python automation/datacite_harvest.py --start 2026-05-01 --end 2026-05-07
-
-    # Harvest the newest day before START_DATE that has no manifest yet
-    python automation/datacite_harvest.py --backfill
 
     # Show which days are done or pending
     python automation/datacite_harvest.py --status
@@ -123,13 +119,11 @@ def harvest_day(  # pylint: disable=too-many-arguments,too-many-locals
     storage: BunnyStorage,
     session,
     work_dir: Path,
-    *,
-    include_registered: bool,
 ) -> None:
     """
-    Harvest and slim the DataCite dataset records created on `day` (and, with
-    `include_registered`, those registered on it), and upload both files and
-    then the day's manifest to the storage zone.
+    Harvest and slim the DataCite dataset records created or registered on
+    `day`, and upload both files and then the day's manifest to the storage
+    zone.
 
     The day's local files are deleted when it finishes, whether or not it
     succeeded.
@@ -145,7 +139,7 @@ def harvest_day(  # pylint: disable=too-many-arguments,too-many-locals
         n_raw = harvest_datacite_datasets_for_date_range_to_ndjson(
             start_date_str=day_iso,
             end_date_str=day_iso,
-            include_registered=include_registered,
+            include_registered=True,
             window_days=1,
             page_size=cfg["page_size"],
             save_folder=str(day_dir),
@@ -258,14 +252,7 @@ def main() -> None:
                 # looks done while its files are being replaced
                 storage.delete(common.manifest_path(SOURCE, day))
             try:
-                harvest_day(
-                    day,
-                    hcfg,
-                    storage,
-                    session,
-                    Path(work_dir),
-                    include_registered=not args.backfill,
-                )
+                harvest_day(day, hcfg, storage, session, Path(work_dir))
             except Exception as e:  # pylint: disable=broad-exception-caught
                 common.report(f"[{day.isoformat()}] Failed: {e!r}")
                 traceback.print_exc()

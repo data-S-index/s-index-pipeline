@@ -50,9 +50,6 @@ Usage:
     python automation/datacite_index.py --date 2026-05-01
     python automation/datacite_index.py --start 2026-05-01 --end 2026-05-07
 
-    # Index the newest loaded day before START_DATE that isn't indexed yet
-    python automation/datacite_index.py --backfill
-
     # Show which days are loaded and indexed
     python automation/datacite_index.py --status
 
@@ -416,10 +413,7 @@ def main() -> None:
             return
 
         indexed = {d for d, r in rows.items() if r["indexedAt"]}
-        todo = sorted(
-            (d for d in rows if args.force or d not in indexed),
-            reverse=args.backfill,
-        )
+        todo = sorted(d for d in rows if args.force or d not in indexed)
         print(
             f"{len(days)} day(s) in range, {len(rows)} loaded, "
             f"{len(indexed)} already indexed, {len(todo)} to index."
