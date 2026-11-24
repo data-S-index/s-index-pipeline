@@ -30,7 +30,8 @@ there). Records without a "Dataset" row (failed in the load) are counted as miss
 
 Days are indexed oldest first, one per run by default (--max-days). With
 --backfill, the days before START_DATE (loaded by the earlier backfill runs)
-are indexed instead, newest first, back to BACKFILL_OLDEST_DATE. A day that
+are indexed instead, newest first, back to BACKFILL_OLDEST_DATE, with no time
+limit (task_wait_seconds is ignored). A day that
 fails is reported and skipped; the remaining days still run and the script
 exits with an error at the end. Like datacite_load.py, nothing is sent while
 the site is in maintenance mode.
@@ -426,7 +427,12 @@ def main() -> None:
     args = parse_args()
     cfg = common.load_config(args.config)
     icfg = cfg["datacite_index"]
-    wait_deadline = time.monotonic() + icfg["task_wait_seconds"]
+    # --backfill runs until every day is indexed (or the workflow's timeout)
+    wait_deadline = (
+        float("inf")
+        if args.backfill
+        else time.monotonic() + icfg["task_wait_seconds"]
+    )
     days = resolve_days(args)
 
     if not args.status and maintenance_mode(cfg["datacite_load"]["maintenance_url"]):
