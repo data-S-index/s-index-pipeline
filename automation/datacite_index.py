@@ -28,7 +28,9 @@ again on the next run. Records skipped by the load because their dataset was
 already in the database are sent too (they replace the document that is already
 there). Records without a "Dataset" row (failed in the load) are counted as missing.
 
-Days are indexed oldest first, one per run by default (--max-days). A day that
+Days are indexed oldest first, one per run by default (--max-days). With
+--backfill, the days before START_DATE (loaded by the earlier backfill runs)
+are indexed instead, newest first, back to BACKFILL_OLDEST_DATE. A day that
 fails is reported and skipped; the remaining days still run and the script
 exits with an error at the end. Like datacite_load.py, nothing is sent while
 the site is in maintenance mode.
@@ -50,6 +52,9 @@ Usage:
     python automation/datacite_index.py --date 2026-05-01
     python automation/datacite_index.py --start 2026-05-01 --end 2026-05-07
 
+    # Index the newest loaded day before START_DATE that isn't indexed yet
+    python automation/datacite_index.py --backfill
+
     # Show which days are loaded and indexed
     python automation/datacite_index.py --status
 
@@ -63,7 +68,7 @@ import sys
 import tempfile
 import time
 import traceback
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import orjson
@@ -84,6 +89,10 @@ from sindex.core.http import make_session  # noqa: E402
 # pylint: enable=wrong-import-position,wrong-import-order
 
 SOURCE = "datacite"
+
+# Last day --backfill goes back to: DataCite has no Dataset records created
+# before February 2011. Backfill starts the day before common.START_DATE.
+BACKFILL_OLDEST_DATE = date(2011, 1, 1)
 
 # SQL to run on the database by hand (also add the two fields to the
 # IngestLog model in prisma/schema.prisma):
@@ -390,7 +399,26 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help='Index days again that already have an "indexedAt".',
     )
+    parser.add_argument(
+        "--backfill",
+        action="store_true",
+        help=f"Index the days before {common.START_DATE} back to "
+        f"{BACKFILL_OLDEST_DATE} instead, newest first.",
+    )
     return parser.parse_args()
+
+
+def resolve_days(args: argparse.Namespace) -> list[date]:
+    """
+    Return the days to work on: common.resolve_days, or with --backfill the day
+    before START_DATE back to BACKFILL_OLDEST_DATE (oldest first either way).
+    """
+    if not args.backfill:
+        return common.resolve_days(args)
+    if args.date or args.start or args.end:
+        sys.exit("Use either --backfill or --date/--start/--end, not both.")
+    n_days = (common.START_DATE - BACKFILL_OLDEST_DATE).days
+    return [BACKFILL_OLDEST_DATE + timedelta(days=i) for i in range(n_days)]
 
 
 def main() -> None:
@@ -399,7 +427,7 @@ def main() -> None:
     cfg = common.load_config(args.config)
     icfg = cfg["datacite_index"]
     wait_deadline = time.monotonic() + icfg["task_wait_seconds"]
-    days = common.resolve_days(args)
+    days = resolve_days(args)
 
     if not args.status and maintenance_mode(cfg["datacite_load"]["maintenance_url"]):
         common.report("The site is in maintenance mode; not indexing anything.")
@@ -413,7 +441,10 @@ def main() -> None:
             return
 
         indexed = {d for d, r in rows.items() if r["indexedAt"]}
-        todo = sorted(d for d in rows if args.force or d not in indexed)
+        todo = sorted(
+            (d for d in rows if args.force or d not in indexed),
+            reverse=args.backfill,
+        )
         print(
             f"{len(days)} day(s) in range, {len(rows)} loaded, "
             f"{len(indexed)} already indexed, {len(todo)} to index."

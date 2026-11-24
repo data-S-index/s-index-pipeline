@@ -179,6 +179,7 @@ python automation/datacite_update.py --status
 
 - [`datacite-harvest.yml`](.github/workflows/datacite-harvest.yml) runs the harvest twice a day (03:17 and 15:17 UTC), one day per run, so a backlog shrinks by one day a day; to catch up faster, run it once with `--max-days 0`. Needs the `BUNNY_STORAGE_PASSWORD` secret.
 - [`datacite-load.yml`](.github/workflows/datacite-load.yml) runs the load (one day per run) after every harvest run, plus daily at 09:47 UTC as a fallback. It reaches the database over Tailscale as an ephemeral `tag:ci` device. Needs the `BUNNY_STORAGE_PASSWORD`, `DATABASE_URL` (using the database's Tailscale address), `TAILSCALE_OAUTH_CLIENT_ID` and `TAILSCALE_OAUTH_SECRET` secrets.
+- [`datacite-backfill-index.yml`](.github/workflows/datacite-backfill-index.yml) runs `datacite_index.py --backfill` twice a day (10:17 and 16:17 UTC), indexing the days before `START_DATE` (back to 2011-01-01) that are loaded but not indexed yet, newest first, with no day limit. Uses the same secrets as `datacite-index.yml`.
 
 - [`datacite-update.yml`](.github/workflows/datacite-update.yml) runs the update twice a day (00:37 and 12:37 UTC). It needs the load's secrets plus `MEILISEARCH_API_URL` and `MEILISEARCH_API_KEY`. By hand, it takes a date, range, day limit or `dry_run`.
 
