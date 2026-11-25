@@ -17,10 +17,10 @@
 name: DataCite update
 
 on:
-  schedule:
-    # Twice a day, away from the harvest/load/index runs
-    - cron: "37 0 * * *" # 00:37 UTC
-    - cron: "37 12 * * *" # 12:37 UTC
+  # schedule:
+  # Twice a day, away from the harvest/load/index runs
+  # - cron: "37 0 * * *" # 00:37 UTC
+  # - cron: "37 12 * * *" # 12:37 UTC
   workflow_dispatch:
     inputs:
       date:
