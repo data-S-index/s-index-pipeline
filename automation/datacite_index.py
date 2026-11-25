@@ -9,18 +9,11 @@ that has an "IngestLog" row but no "indexedAt" yet, it:
      datacite_load.py inserted it under) with its "DatasetAuthor" rows
   3. Sends those datasets to Meilisearch and sets the day's "indexedAt" and
      "indexed" in "IngestLog"
-  4. Waits for the Meilisearch tasks and reports how long they took
 
 Meilisearch queues each batch as a task and indexes it in the background. The
-next day is only sent once all of the previous day's tasks are done, so the
-server never has more than one day queued. A day counts as indexed once all its
-batches are accepted: running out of time (task_wait_seconds) or losing contact
-during the wait doesn't fail the day, but the run stops there instead of moving
-on, and the remaining days are left for the next run. A task that Meilisearch
-reports as failed or canceled during the wait fails the day and clears its
-"indexedAt", so it is sent again on the next run; a task that fails after the
-wait ended isn't noticed, but can be looked up by the task uids in the run's
-report.
+script doesn't wait for the tasks: a day counts as indexed once all its batches
+are accepted, and the next day is sent right away. A task that fails later
+isn't noticed here, but can be looked up by the task uids in the run's report.
 
 Documents are keyed by "Dataset".id, so sending a dataset again replaces its
 document: a day that fails or is interrupted while sending is simply indexed
@@ -31,7 +24,8 @@ there). Records without a "Dataset" row (failed in the load) are counted as miss
 Days are indexed oldest first, one per run by default (--max-days). With
 --backfill, the days before START_DATE (loaded by the earlier backfill runs)
 are indexed instead, newest first, back to BACKFILL_OLDEST_DATE, with no time
-limit (task_wait_seconds is ignored). A day that
+limit (run_seconds is ignored). Otherwise no new day is started after
+run_seconds. A day that
 fails is reported and skipped; the remaining days still run and the script
 exits with an error at the end. Like datacite_load.py, nothing is sent while
 the site is in maintenance mode.
@@ -74,7 +68,6 @@ from pathlib import Path
 
 import orjson
 import psycopg
-import requests
 from psycopg.rows import dict_row
 
 # pylint: disable=wrong-import-position,wrong-import-order
@@ -115,10 +108,6 @@ AUTHORS_SQL = """
 
 MARK_INDEXED_SQL = """
     UPDATE "IngestLog" SET "indexedAt" = %s, indexed = %s
-    WHERE source = %s AND day = %s AND "fileSha256" = %s"""
-
-CLEAR_INDEXED_SQL = """
-    UPDATE "IngestLog" SET "indexedAt" = NULL, indexed = NULL
     WHERE source = %s AND day = %s AND "fileSha256" = %s"""
 
 # Meilisearch task statuses after which a task won't change any more
@@ -244,19 +233,6 @@ def ingest_rows(conn: psycopg.Connection, days: list[date]) -> dict[date, dict]:
         return {row["day"]: row for row in cur}
 
 
-def wait_for_tasks(
-    search: Meilisearch, tasks: list[int], deadline: float, day_iso: str
-) -> int:
-    """Wait for `tasks` in order until `deadline`. Returns how many are done."""
-    print(f"[{day_iso}] Waiting for {len(tasks)} Meilisearch task(s)", flush=True)
-    waiting = common.ProgressLog(f"[{day_iso}] Tasks done", every_seconds=10)
-    for n, uid in enumerate(tasks, start=1):
-        if not search.wait_for_task(uid, deadline):
-            return n - 1
-        waiting(n, len(tasks), final=n == len(tasks))
-    return len(tasks)
-
-
 def index_day(  # pylint: disable=too-many-arguments,too-many-locals
     row: dict,
     conn: psycopg.Connection,
@@ -264,15 +240,10 @@ def index_day(  # pylint: disable=too-many-arguments,too-many-locals
     search: Meilisearch,
     cfg: dict,
     work_dir: Path,
-    wait_deadline: float,
-) -> bool:
+) -> None:
     """
-    Send a loaded day's datasets to Meilisearch, mark it indexed, and wait for
-    its tasks until time.monotonic() passes `wait_deadline`.
-
-    Returns:
-        True if all of the day's tasks are done, False if the wait ended first
-        (the day stays marked indexed, but no further day should be sent).
+    Send a loaded day's datasets to Meilisearch and mark it indexed, without
+    waiting for Meilisearch to finish the tasks.
     """
     day_iso = row["day"].isoformat()
     local_file = work_dir / f"{SOURCE}-{day_iso}.ndjson.gz"
@@ -321,10 +292,11 @@ def index_day(  # pylint: disable=too-many-arguments,too-many-locals
     finally:
         local_file.unlink(missing_ok=True)
 
-    # Marked before the wait, so a run that ends during it can't undo the day.
-    # Only if the day wasn't loaded again (--force) in the meantime.
-    day_key = (SOURCE, row["day"], row["fileSha256"])
-    conn.execute(MARK_INDEXED_SQL, (datetime.now(timezone.utc), indexed, *day_key))
+    # Only if the day wasn't loaded again (--force) in the meantime
+    conn.execute(
+        MARK_INDEXED_SQL,
+        (datetime.now(timezone.utc), indexed, SOURCE, row["day"], row["fileSha256"]),
+    )
     task_range = f"{tasks[0]}-{tasks[-1]}" if tasks else "none"
     common.report(
         f"[{day_iso}] Sent: {indexed:,} | "
@@ -332,34 +304,6 @@ def index_day(  # pylint: disable=too-many-arguments,too-many-locals
         f"Tasks: {task_range} | "
         f"Took: {time.monotonic() - t0:,.0f}s"
     )
-    if not tasks:
-        return True
-
-    t_wait = time.monotonic()
-    try:
-        done = wait_for_tasks(search, tasks, wait_deadline, day_iso)
-    except TaskFailed:
-        conn.execute(CLEAR_INDEXED_SQL, day_key)
-        raise
-    except requests.RequestException as e:
-        common.report(
-            f"[{day_iso}] Stopped waiting, couldn't check the tasks ({e!r}); "
-            f"Meilisearch continues in the background."
-        )
-        return False
-
-    waited = time.monotonic() - t_wait
-    if done == len(tasks):
-        common.report(
-            f"[{day_iso}] All {done:,} task(s) done | "
-            f"Waited: {waited:,.0f}s | Total: {time.monotonic() - t0:,.0f}s"
-        )
-        return True
-    common.report(
-        f"[{day_iso}] Stopped waiting after {waited:,.0f}s with {done:,} of "
-        f"{len(tasks):,} task(s) done; Meilisearch continues in the background."
-    )
-    return False
 
 
 def print_status(days: list[date], rows: dict) -> None:
@@ -428,10 +372,8 @@ def main() -> None:
     cfg = common.load_config(args.config)
     icfg = cfg["datacite_index"]
     # --backfill runs until every day is indexed (or the workflow's timeout)
-    wait_deadline = (
-        float("inf")
-        if args.backfill
-        else time.monotonic() + icfg["task_wait_seconds"]
+    deadline = (
+        float("inf") if args.backfill else time.monotonic() + icfg["run_seconds"]
     )
     days = resolve_days(args)
 
@@ -477,38 +419,16 @@ def main() -> None:
                     )
                     todo = todo[: todo.index(day)]
                     break
-                if time.monotonic() > wait_deadline:
-                    common.report(
-                        f"Out of time to wait for Meilisearch; stopping before "
-                        f"{day.isoformat()}."
-                    )
+                if time.monotonic() > deadline:
+                    common.report(f"Out of time; stopping before {day.isoformat()}.")
                     todo = todo[: todo.index(day)]
                     break
                 try:
-                    finished = index_day(
-                        rows[day],
-                        conn,
-                        storage,
-                        search,
-                        icfg,
-                        Path(work_dir),
-                        wait_deadline,
-                    )
+                    index_day(rows[day], conn, storage, search, icfg, Path(work_dir))
                 except Exception as e:  # pylint: disable=broad-exception-caught
                     common.report(f"[{day.isoformat()}] Failed: {e!r}")
                     traceback.print_exc()
                     failed.append(day)
-                    continue
-                if not finished:
-                    # Don't queue another day on top of unfinished tasks
-                    rest = todo[todo.index(day) + 1 :]
-                    if rest:
-                        common.report(
-                            f"[{day.isoformat()}] Tasks not done; leaving "
-                            f"{len(rest)} day(s) for the next run."
-                        )
-                    todo = todo[: todo.index(day) + 1]
-                    break
 
     if todo:
         common.report(f"Done. Indexed {len(todo) - len(failed)} of {len(todo)} day(s).")

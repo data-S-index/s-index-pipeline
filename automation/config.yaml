@@ -42,11 +42,10 @@ datacite_index:
   # Records looked up and sent to Meilisearch per request
   batch_size: 500
 
-  # Seconds from the start of a run after which it stops waiting for Meilisearch
-  # tasks (they continue in the background) and stops starting new days: each
-  # day's tasks must be done before the next day is sent. Keep it under the
-  # workflows' timeout-minutes (350), so a run ends by itself instead of being killed.
-  task_wait_seconds: 19800
+  # Seconds from the start of a run after which no new day is started (ignored
+  # with --backfill). Meilisearch tasks aren't waited for. Keep it under the
+  # workflow's timeout-minutes (350) minus one slow day.
+  run_seconds: 19800
 
 # datacite_update.py: DataCite metadata changes -> storage zone, Postgres and
 # Meilisearch (the DataCite page size comes from datacite_harvest)
